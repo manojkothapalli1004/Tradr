@@ -361,7 +361,8 @@ func main() {
 							trades, detail, harvestDetails = executeOptionsResult(sc, stratState, result, signalStr, logger)
 							mu.Unlock()
 							if ch := resolveChannel(cfg.Discord.Channels, sc.Platform, sc.Type); ch != "" {
-								channelTradeDetails[ch] = append(channelTradeDetails[ch], harvestDetails...)
+								key := ch + "|" + extractAsset(sc)
+								channelTradeDetails[key] = append(channelTradeDetails[key], harvestDetails...)
 							}
 						}
 					case "perps":
@@ -383,7 +384,8 @@ func main() {
 					if trades > 0 && detail != "" {
 						if ch := resolveChannel(cfg.Discord.Channels, sc.Platform, sc.Type); ch != "" {
 							channelTrades[ch] += trades
-							channelTradeDetails[ch] = append(channelTradeDetails[ch], detail)
+							key := ch + "|" + extractAsset(sc)
+							channelTradeDetails[key] = append(channelTradeDetails[key], detail)
 						}
 					}
 
@@ -442,7 +444,7 @@ func main() {
 		elapsed := time.Since(cycleStart)
 		logMgr.LogSummary(cycle, elapsed, len(dueStrategies), totalTrades, totalValue)
 
-		// Discord notification — one message per channel, dynamic platform support.
+		// Discord notification — one message per channel per asset, dynamic platform support.
 		if discord != nil {
 			mu.RLock()
 			for ch, chStrats := range channelStrats {
@@ -458,15 +460,41 @@ func main() {
 					continue
 				}
 				chTrades := channelTrades[ch]
-				chDetails := channelTradeDetails[ch]
-				chValue := channelValue[ch]
 				// Options: post every run. Others: hourly or on trade.
 				// (cycle-1)%12==0 fires at cycles 1,13,25... so first summary posts on startup.
-				if isOptionsType(chStrats) || chTrades > 0 || (cycle-1)%12 == 0 {
-					chKey := channelKeyFromID(cfg.Discord.Channels, ch)
-					msg := FormatCategorySummary(cycle, elapsed, len(dueStrategies), chTrades, chValue, prices, chDetails, chStrats, state, chKey)
+				if !isOptionsType(chStrats) && chTrades == 0 && (cycle-1)%12 != 0 {
+					continue
+				}
+				chKey := channelKeyFromID(cfg.Discord.Channels, ch)
+				assetGroups, assetKeys := groupByAsset(chStrats)
+				if len(assetKeys) <= 1 {
+					// Single asset (or none) → backwards-compatible single message without asset label.
+					detailKey := ch + "|"
+					if len(assetKeys) == 1 {
+						detailKey = ch + "|" + assetKeys[0]
+					}
+					chDetails := channelTradeDetails[detailKey]
+					chValue := channelValue[ch]
+					msg := FormatCategorySummary(cycle, elapsed, len(dueStrategies), chTrades, chValue, prices, chDetails, chStrats, state, chKey, "")
 					if err := discord.SendMessage(ch, msg); err != nil {
 						fmt.Printf("[WARN] Discord %s summary failed: %v\n", chKey, err)
+					}
+				} else {
+					// Multiple assets → one message per asset.
+					for _, asset := range assetKeys {
+						assetStrats := assetGroups[asset]
+						assetDetails := channelTradeDetails[ch+"|"+asset]
+						assetValue := 0.0
+						for _, sc := range assetStrats {
+							if s, ok := state.Strategies[sc.ID]; ok {
+								assetValue += PortfolioValue(s, prices)
+							}
+						}
+						assetTrades := len(assetDetails)
+						msg := FormatCategorySummary(cycle, elapsed, len(dueStrategies), assetTrades, assetValue, prices, assetDetails, assetStrats, state, chKey, asset)
+						if err := discord.SendMessage(ch, msg); err != nil {
+							fmt.Printf("[WARN] Discord %s/%s summary failed: %v\n", chKey, asset, err)
+						}
 					}
 				}
 			}
