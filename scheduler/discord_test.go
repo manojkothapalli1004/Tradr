@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -55,6 +56,92 @@ func TestIsOptionsType(t *testing.T) {
 	}
 	if !isOptionsType(opts) {
 		t.Error("expected true when options present")
+	}
+}
+
+func TestExtractAsset(t *testing.T) {
+	cases := []struct {
+		sc   StrategyConfig
+		want string
+	}{
+		// spot: Args[1] is "BTC/USDT" → strip suffix → "BTC"
+		{StrategyConfig{Type: "spot", Args: []string{"sma_crossover", "BTC/USDT"}}, "BTC"},
+		// options: Args[1] is the underlying symbol
+		{StrategyConfig{Type: "options", Args: []string{"wheel", "ETH", "--platform=deribit"}}, "ETH"},
+		// perps: Args[1] is coin name
+		{StrategyConfig{Type: "perps", Args: []string{"momentum", "SOL", "1h"}}, "SOL"},
+		// perps BNB
+		{StrategyConfig{Type: "perps", Args: []string{"rsi", "BNB", "1h"}}, "BNB"},
+		// empty args → ""
+		{StrategyConfig{Type: "spot", Args: []string{}}, ""},
+		// only one arg → ""
+		{StrategyConfig{Type: "perps", Args: []string{"strategy"}}, ""},
+	}
+	for _, c := range cases {
+		got := extractAsset(c.sc)
+		if got != c.want {
+			t.Errorf("extractAsset(%v) = %q, want %q", c.sc.Args, got, c.want)
+		}
+	}
+}
+
+func TestGroupByAsset(t *testing.T) {
+	strats := []StrategyConfig{
+		{ID: "hl-rsi-eth", Type: "perps", Args: []string{"rsi", "ETH", "1h"}},
+		{ID: "hl-mom-btc", Type: "perps", Args: []string{"momentum", "BTC", "1h"}},
+		{ID: "hl-ema-sol", Type: "perps", Args: []string{"ema", "SOL", "1h"}},
+		{ID: "hl-rsi-bnb", Type: "perps", Args: []string{"rsi", "BNB", "1h"}},
+		{ID: "hl-sma-btc", Type: "perps", Args: []string{"sma", "BTC", "1h"}},
+	}
+	groups, keys := groupByAsset(strats)
+
+	// 4 distinct assets
+	if len(keys) != 4 {
+		t.Fatalf("expected 4 asset keys, got %d: %v", len(keys), keys)
+	}
+	// BTC first, ETH second, SOL third, BNB fourth
+	if keys[0] != "BTC" || keys[1] != "ETH" || keys[2] != "SOL" || keys[3] != "BNB" {
+		t.Errorf("unexpected key order: %v", keys)
+	}
+	// BTC group has 2 strategies
+	if len(groups["BTC"]) != 2 {
+		t.Errorf("expected 2 BTC strategies, got %d", len(groups["BTC"]))
+	}
+
+	// Single asset case
+	single := []StrategyConfig{
+		{ID: "hl-rsi-eth", Type: "perps", Args: []string{"rsi", "ETH", "1h"}},
+	}
+	_, keys2 := groupByAsset(single)
+	if len(keys2) != 1 || keys2[0] != "ETH" {
+		t.Errorf("single asset: expected [ETH], got %v", keys2)
+	}
+}
+
+func TestFormatCategorySummary_WithAsset(t *testing.T) {
+	strats := []StrategyConfig{
+		{ID: "hl-rsi-btc", Type: "perps", Args: []string{"rsi", "BTC", "1h"}, Capital: 1000},
+	}
+	state := &AppState{
+		Strategies: map[string]*StrategyState{
+			"hl-rsi-btc": {Cash: 1000},
+		},
+	}
+	prices := map[string]float64{"BTC/USDT": 50000, "ETH/USDT": 3000}
+
+	// With asset — title should contain " — BTC" and only BTC price shown
+	msg := FormatCategorySummary(1, 0, 1, 0, 1000, prices, nil, strats, state, "hyperliquid", "BTC")
+	if !strings.Contains(msg, "— BTC") {
+		t.Errorf("expected '— BTC' in title, got:\n%s", msg)
+	}
+	if strings.Contains(msg, "ETH") {
+		t.Errorf("ETH price should be filtered out for asset=BTC, got:\n%s", msg)
+	}
+
+	// Without asset — no suffix in title
+	msg2 := FormatCategorySummary(1, 0, 1, 0, 1000, prices, nil, strats, state, "hyperliquid", "")
+	if strings.Contains(msg2, "— ") {
+		t.Errorf("expected no asset suffix when asset='', got:\n%s", msg2)
 	}
 }
 

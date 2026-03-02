@@ -180,6 +180,7 @@ func isOptionsType(strats []StrategyConfig) bool {
 
 // FormatCategorySummary creates a Discord message for a set of strategies sharing a channel.
 // channelStrategies is pre-filtered by the caller; channelKey is the display label.
+// asset, when non-empty, appends " — <ASSET>" to the title and filters the prices line.
 func FormatCategorySummary(
 	cycle int,
 	elapsed time.Duration,
@@ -191,6 +192,7 @@ func FormatCategorySummary(
 	channelStrategies []StrategyConfig,
 	state *AppState,
 	channelKey string,
+	asset string,
 ) string {
 	var sb strings.Builder
 
@@ -202,25 +204,39 @@ func FormatCategorySummary(
 		icon = "📈"
 	}
 	title := strings.ToUpper(channelKey[:1]) + channelKey[1:]
+	assetSuffix := ""
+	if asset != "" {
+		assetSuffix = " — " + asset
+	}
 	if totalTrades > 0 {
-		sb.WriteString(fmt.Sprintf("%s **%s TRADES**\n", icon, strings.ToUpper(title)))
+		sb.WriteString(fmt.Sprintf("%s **%s TRADES%s**\n", icon, strings.ToUpper(title), assetSuffix))
 	} else {
-		sb.WriteString(fmt.Sprintf("%s **%s Summary**\n", icon, title))
+		sb.WriteString(fmt.Sprintf("%s **%s Summary%s**\n", icon, title, assetSuffix))
 	}
 
 	sb.WriteString(fmt.Sprintf("Cycle #%d | %.1fs\n", cycle, elapsed.Seconds()))
 
-	// Prices inline
-	if len(prices) > 0 {
-		syms := make([]string, 0, len(prices))
-		for s := range prices {
+	// Prices inline — filter to just this asset when asset is specified.
+	displayPrices := prices
+	if asset != "" {
+		displayPrices = make(map[string]float64)
+		for sym, price := range prices {
+			base := strings.ToUpper(strings.SplitN(sym, "/", 2)[0])
+			if base == asset {
+				displayPrices[sym] = price
+			}
+		}
+	}
+	if len(displayPrices) > 0 {
+		syms := make([]string, 0, len(displayPrices))
+		for s := range displayPrices {
 			syms = append(syms, s)
 		}
 		sort.Strings(syms)
 		parts := make([]string, 0, len(syms))
 		for _, sym := range syms {
 			short := strings.TrimSuffix(sym, "/USDT")
-			parts = append(parts, fmt.Sprintf("%s $%.0f", short, prices[sym]))
+			parts = append(parts, fmt.Sprintf("%s $%.0f", short, displayPrices[sym]))
 		}
 		sb.WriteString(strings.Join(parts, " | "))
 		sb.WriteString("\n")
@@ -303,21 +319,47 @@ func extractStrategyName(sc StrategyConfig) string {
 }
 
 func extractAsset(sc StrategyConfig) string {
-	// Extract asset from strategy ID
-	// Examples: "momentum-btc" -> "BTC", "deribit-vol-eth" -> "ETH", "ibkr-wheel-btc" -> "BTC"
-	parts := strings.Split(sc.ID, "-")
-	if len(parts) > 0 {
-		lastPart := strings.ToUpper(parts[len(parts)-1])
-		// Check if it's a known asset
-		if lastPart == "BTC" || lastPart == "ETH" || lastPart == "SOL" {
-			return lastPart
-		}
-	}
-	// For options, try args
-	if sc.Type == "options" && len(sc.Args) > 1 {
-		return strings.ToUpper(sc.Args[1])
+	// Args[1] is the canonical asset source for all strategy types.
+	// Spot uses "BTC/USDT" style symbols; strip the quote currency.
+	if len(sc.Args) > 1 {
+		asset := strings.ToUpper(sc.Args[1])
+		return strings.TrimSuffix(asset, "/USDT")
 	}
 	return ""
+}
+
+// assetSortKey returns a stable sort key so BTC/ETH/SOL/BNB appear first.
+func assetSortKey(asset string) string {
+	switch asset {
+	case "BTC":
+		return "0"
+	case "ETH":
+		return "1"
+	case "SOL":
+		return "2"
+	case "BNB":
+		return "3"
+	default:
+		return "4" + asset
+	}
+}
+
+// groupByAsset groups strategies by asset and returns sorted asset keys.
+// Strategies with no extractable asset are grouped under "".
+func groupByAsset(strats []StrategyConfig) (map[string][]StrategyConfig, []string) {
+	groups := make(map[string][]StrategyConfig)
+	for _, sc := range strats {
+		asset := extractAsset(sc)
+		groups[asset] = append(groups[asset], sc)
+	}
+	keys := make([]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return assetSortKey(keys[i]) < assetSortKey(keys[j])
+	})
+	return groups, keys
 }
 
 // fmtComma formats a float as a comma-separated integer string (e.g. 1234567 -> "1,234,567").
