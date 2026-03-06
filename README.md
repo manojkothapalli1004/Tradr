@@ -366,20 +366,6 @@ go-trader/
 
 ---
 
-## Risk Disclaimer
-
-This application is provided for informational and educational purposes only. It does not constitute financial advice, investment advice, or a recommendation to buy or sell any asset.
-
-Trading involves substantial risk of loss. Past performance is not indicative of future results. You may lose some or all of your invested capital. Only trade with funds you can afford to lose.
-
-This application is an automated tool and makes no guarantees regarding accuracy, profitability, or outcomes. Market conditions can change rapidly and the application may not react appropriately to all scenarios.
-
-By using this application, you acknowledge that you are solely responsible for your own investment decisions and any resulting gains or losses. The creators, developers, and operators of this application accept no liability for any financial losses incurred through its use.
-
-*This is not financial advice. Trade at your own risk.*
-
----
-
 ## Dependencies
 
 - **Python 3.12+** — managed by [uv](https://github.com/astral-sh/uv) (ccxt, pandas, numpy, scipy, hyperliquid-python-sdk)
@@ -397,3 +383,17 @@ By using this application, you acknowledge that you are solely responsible for y
 | Strategy not trading | Check circuit breaker in `/status`, verify params |
 | Reset positions | `cp scheduler/state.example.json scheduler/state.json && systemctl restart go-trader` |
 | Hyperliquid live mode fails | Set `HYPERLIQUID_SECRET_KEY` env var; paper mode works without it |
+
+---
+
+## Risk Disclaimer
+
+This application is provided for informational and educational purposes only. It does not constitute financial advice, investment advice, or a recommendation to buy or sell any asset.
+
+Trading involves substantial risk of loss. Past performance is not indicative of future results. You may lose some or all of your invested capital. Only trade with funds you can afford to lose.
+
+This application is an automated tool and makes no guarantees regarding accuracy, profitability, or outcomes. Market conditions can change rapidly and the application may not react appropriately to all scenarios.
+
+By using this application, you acknowledge that you are solely responsible for your own investment decisions and any resulting gains or losses. The creators, developers, and operators of this application accept no liability for any financial losses incurred through its use.
+
+*This is not financial advice. Trade at your own risk.*
