@@ -29,6 +29,13 @@ type PlatformConfig struct {
 	Risk      *PortfolioRiskConfig `json:"risk,omitempty"` // overrides portfolio-level defaults
 }
 
+// CorrelationConfig controls portfolio-level directional exposure tracking.
+type CorrelationConfig struct {
+	Enabled             bool    `json:"enabled"`
+	MaxConcentrationPct float64 `json:"max_concentration_pct"`  // warn when one asset > X% of gross (default 60)
+	MaxSameDirectionPct float64 `json:"max_same_direction_pct"` // warn when >X% of strategies share direction (default 75)
+}
+
 // Config is the top-level scheduler configuration.
 type Config struct {
 	ConfigVersion   int                        `json:"config_version,omitempty"` // bumped when new fields are added; 0/missing = v1 baseline
@@ -40,6 +47,7 @@ type Config struct {
 	AutoUpdate      string                     `json:"auto_update,omitempty"` // "off", "daily", "heartbeat" (default: "off")
 	Strategies      []StrategyConfig           `json:"strategies"`
 	PortfolioRisk   *PortfolioRiskConfig       `json:"portfolio_risk,omitempty"`
+	Correlation     *CorrelationConfig         `json:"correlation,omitempty"`
 	Platforms       map[string]*PlatformConfig `json:"platforms,omitempty"`
 }
 
@@ -171,6 +179,18 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.PortfolioRisk.WarnThresholdPct = 80
 	}
 
+	// Correlation tracking defaults.
+	if cfg.Correlation == nil {
+		cfg.Correlation = &CorrelationConfig{Enabled: false, MaxConcentrationPct: 60, MaxSameDirectionPct: 75}
+	}
+
+	if cfg.Correlation.MaxConcentrationPct == 0 {
+		cfg.Correlation.MaxConcentrationPct = 60
+	}
+	if cfg.Correlation.MaxSameDirectionPct == 0 {
+		cfg.Correlation.MaxSameDirectionPct = 75
+	}
+
 	if err := ValidateConfig(&cfg); err != nil {
 		return nil, err
 	}
@@ -267,6 +287,16 @@ func ValidateConfig(cfg *Config) error {
 		}
 		if cfg.PortfolioRisk.WarnThresholdPct <= 0 || cfg.PortfolioRisk.WarnThresholdPct > 100 {
 			errs = append(errs, fmt.Sprintf("portfolio_risk.warn_threshold_pct must be in (0, 100], got %g", cfg.PortfolioRisk.WarnThresholdPct))
+		}
+	}
+
+	// Validate correlation config.
+	if cfg.Correlation != nil && cfg.Correlation.Enabled {
+		if cfg.Correlation.MaxConcentrationPct <= 0 || cfg.Correlation.MaxConcentrationPct > 100 {
+			errs = append(errs, fmt.Sprintf("correlation.max_concentration_pct must be in (0, 100], got %g", cfg.Correlation.MaxConcentrationPct))
+		}
+		if cfg.Correlation.MaxSameDirectionPct <= 0 || cfg.Correlation.MaxSameDirectionPct > 100 {
+			errs = append(errs, fmt.Sprintf("correlation.max_same_direction_pct must be in (0, 100], got %g", cfg.Correlation.MaxSameDirectionPct))
 		}
 	}
 
