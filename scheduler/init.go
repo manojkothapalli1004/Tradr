@@ -42,6 +42,7 @@ var knownShortNames = map[string]string{
 	"momentum_options":   "mom",
 	"protective_puts":    "pput",
 	"covered_calls":      "ccall",
+	"breakout":           "bo",
 }
 
 // deriveShortName returns a short abbreviation for a strategy ID.
@@ -85,12 +86,24 @@ var defaultPerpsStrategies = []stratDef{
 	{ID: "momentum", ShortName: "momentum"},
 }
 
+var defaultFuturesStrategies = []stratDef{
+	{ID: "momentum", ShortName: "momentum"},
+	{ID: "mean_reversion", ShortName: "mr"},
+	{ID: "rsi", ShortName: "rsi"},
+	{ID: "macd", ShortName: "macd"},
+	{ID: "breakout", ShortName: "bo"},
+}
+
+// Supported CME futures symbols for the init wizard.
+var supportedFuturesSymbols = []string{"ES", "NQ", "MES", "MNQ", "CL", "GC"}
+
 // Live strategy lists — populated by discoverStrategies() at startup.
 // Tests set these via init() to avoid Python dependency.
 var (
 	spotStrategies    []stratDef
 	optionsStrategies []stratDef
 	perpsStrategies   []stratDef
+	futuresStrategies []stratDef
 )
 
 // stratListEntry is one element from --list-json output.
@@ -142,33 +155,44 @@ func discoverStrategies() {
 	if discovered := discoverPythonStrategies("shared_strategies/options/strategies.py"); len(discovered) > 0 {
 		optionsStrategies = discovered
 	}
+	futuresStrategies = defaultFuturesStrategies
+	if discovered := discoverPythonStrategies("shared_strategies/futures/strategies.py"); len(discovered) > 0 {
+		futuresStrategies = discovered
+	}
 }
 
 // InitOptions captures all user choices from the interactive wizard.
 type InitOptions struct {
-	OutputPath       string
-	Assets           []string // selected asset names, e.g. ["BTC", "ETH"]
-	EnableSpot       bool
-	EnableOptions    bool
-	EnablePerps      bool
-	OptionPlatforms  []string // "deribit", "ibkr", or both
-	PerpsMode        string   // "paper" or "live"
-	SpotStrategies   []string // selected spot strategy IDs
-	IncludePairs     bool
-	OptStrategies    []string // selected options strategy IDs
-	PerpsStrategies  []string // selected perps strategy IDs (auto-populated if empty)
-	SpotCapital      float64
-	OptionsCapital   float64
-	PerpsCapital     float64
-	SpotDrawdown     float64
-	OptionsDrawdown  float64
-	PerpsDrawdown    float64
-	DiscordEnabled   bool
-	DiscordOwnerID   string            // Discord user ID for DM features (upgrade prompts, config migration)
-	SpotChannelID    string            // deprecated: use ChannelMap
-	OptionsChannelID string            // deprecated: use ChannelMap
-	ChannelMap       map[string]string // keyed by platform/type ("spot", "hyperliquid", "deribit", etc.)
-	AutoUpdate       string            // "off", "daily", "heartbeat" (default: "off")
+	OutputPath            string
+	Assets                []string // selected asset names, e.g. ["BTC", "ETH"]
+	EnableSpot            bool
+	EnableOptions         bool
+	EnablePerps           bool
+	OptionPlatforms       []string // "deribit", "ibkr", or both
+	PerpsMode             string   // "paper" or "live"
+	SpotStrategies        []string // selected spot strategy IDs
+	IncludePairs          bool
+	OptStrategies         []string // selected options strategy IDs
+	PerpsStrategies       []string // selected perps strategy IDs (auto-populated if empty)
+	SpotCapital           float64
+	OptionsCapital        float64
+	PerpsCapital          float64
+	SpotDrawdown          float64
+	OptionsDrawdown       float64
+	PerpsDrawdown         float64
+	EnableFutures         bool
+	FuturesMode           string   // "paper" or "live"
+	FuturesStrategies     []string // selected futures strategy IDs
+	FuturesSymbols        []string // selected CME symbols (e.g. ["ES", "MES"])
+	FuturesCapital        float64
+	FuturesDrawdown       float64
+	FuturesFeePerContract float64
+	DiscordEnabled        bool
+	DiscordOwnerID        string            // Discord user ID for DM features (upgrade prompts, config migration)
+	SpotChannelID         string            // deprecated: use ChannelMap
+	OptionsChannelID      string            // deprecated: use ChannelMap
+	ChannelMap            map[string]string // keyed by platform/type ("spot", "hyperliquid", "deribit", etc.)
+	AutoUpdate            string            // "off", "daily", "heartbeat" (default: "off")
 }
 
 // generateConfig builds a Config from InitOptions. Pure function, no I/O.
@@ -293,9 +317,41 @@ func generateConfig(opts InitOptions) *Config {
 		}
 	}
 
+	// Futures strategies (TopStep).
+	usesTopstep := false
+	if opts.EnableFutures {
+		usesTopstep = true
+		feePerContract := opts.FuturesFeePerContract
+		for _, stratID := range opts.FuturesStrategies {
+			shortName := deriveShortName(stratID)
+			for _, symbol := range opts.FuturesSymbols {
+				id := fmt.Sprintf("ts-%s-%s", shortName, strings.ToLower(symbol))
+				sc := StrategyConfig{
+					ID:              id,
+					Type:            "futures",
+					Platform:        "topstep",
+					Script:          "shared_scripts/check_topstep.py",
+					Args:            []string{stratID, symbol, "1h", fmt.Sprintf("--mode=%s", opts.FuturesMode)},
+					Capital:         opts.FuturesCapital,
+					MaxDrawdownPct:  opts.FuturesDrawdown,
+					IntervalSeconds: 3600,
+				}
+				if feePerContract > 0 {
+					sc.FuturesConfig = &FuturesConfig{FeePerContract: feePerContract}
+				}
+				cfg.Strategies = append(cfg.Strategies, sc)
+			}
+		}
+	}
+
 	if usesHyperliquid {
 		cfg.Platforms["hyperliquid"] = &PlatformConfig{
 			StateFile: "platforms/hyperliquid/state.json",
+		}
+	}
+	if usesTopstep {
+		cfg.Platforms["topstep"] = &PlatformConfig{
+			StateFile: "platforms/topstep/state.json",
 		}
 	}
 
@@ -345,7 +401,7 @@ func runInitFromJSON(jsonStr string, outputPath string) int {
 		fmt.Fprintln(os.Stderr, "Error: at least one asset required")
 		return 1
 	}
-	if !opts.EnableSpot && !opts.EnableOptions && !opts.EnablePerps {
+	if !opts.EnableSpot && !opts.EnableOptions && !opts.EnablePerps && !opts.EnableFutures {
 		fmt.Fprintln(os.Stderr, "Error: at least one strategy type must be enabled")
 		return 1
 	}
@@ -369,6 +425,27 @@ func runInitFromJSON(jsonStr string, outputPath string) int {
 	if opts.EnablePerps && len(opts.PerpsStrategies) == 0 {
 		for _, s := range perpsStrategies {
 			opts.PerpsStrategies = append(opts.PerpsStrategies, s.ID)
+		}
+	}
+
+	// Auto-populate FuturesStrategies from discovered list if not specified.
+	if opts.EnableFutures {
+		if opts.FuturesMode == "" {
+			opts.FuturesMode = "paper"
+		}
+		if len(opts.FuturesStrategies) == 0 {
+			for _, s := range futuresStrategies {
+				opts.FuturesStrategies = append(opts.FuturesStrategies, s.ID)
+			}
+		}
+		if len(opts.FuturesSymbols) == 0 {
+			opts.FuturesSymbols = []string{"ES", "MES"}
+		}
+		if opts.FuturesCapital == 0 {
+			opts.FuturesCapital = 5000
+		}
+		if opts.FuturesDrawdown == 0 {
+			opts.FuturesDrawdown = 5
 		}
 	}
 
@@ -447,9 +524,9 @@ func runInit(args []string) int {
 	}
 
 	// Step 3: Strategy types.
-	stratTypeNames := []string{"spot", "options", "perps"}
+	stratTypeNames := []string{"spot", "options", "perps", "futures"}
 	stratTypeIdxs := p.MultiSelect("\nSelect strategy types:", stratTypeNames, false)
-	enableSpot, enableOptions, enablePerps := false, false, false
+	enableSpot, enableOptions, enablePerps, enableFutures := false, false, false, false
 	for _, idx := range stratTypeIdxs {
 		switch stratTypeNames[idx] {
 		case "spot":
@@ -458,9 +535,11 @@ func runInit(args []string) int {
 			enableOptions = true
 		case "perps":
 			enablePerps = true
+		case "futures":
+			enableFutures = true
 		}
 	}
-	if !enableSpot && !enableOptions && !enablePerps {
+	if !enableSpot && !enableOptions && !enablePerps && !enableFutures {
 		fmt.Println("No strategy types selected. Aborted.")
 		return 1
 	}
@@ -486,6 +565,23 @@ func runInit(args []string) int {
 		modeOptions := []string{"paper (safe default)", "live (requires HYPERLIQUID_SECRET_KEY)"}
 		if p.Choice("\nPerps trading mode:", modeOptions, 0) == 1 {
 			perpsMode = "live"
+		}
+	}
+
+	// Step 5b: Futures mode and symbols.
+	futuresMode := "paper"
+	var futuresSymbols []string
+	if enableFutures {
+		modeOptions := []string{"paper (safe default)", "live (requires TOPSTEP_API_KEY)"}
+		if p.Choice("\nFutures trading mode:", modeOptions, 0) == 1 {
+			futuresMode = "live"
+		}
+		symbolIdxs := p.MultiSelect("\nSelect futures symbols:", supportedFuturesSymbols, false)
+		for _, idx := range symbolIdxs {
+			futuresSymbols = append(futuresSymbols, supportedFuturesSymbols[idx])
+		}
+		if len(futuresSymbols) == 0 {
+			futuresSymbols = []string{"ES", "MES"} // defaults
 		}
 	}
 
@@ -524,7 +620,20 @@ func runInit(args []string) int {
 		}
 	}
 
-	if len(selectedSpotStrats) == 0 && !includePairs && len(selectedOptStrats) == 0 && !enablePerps {
+	// Step 7b: Futures strategy selection.
+	var selectedFuturesStrats []string
+	if enableFutures {
+		futNames := make([]string, len(futuresStrategies))
+		for i, s := range futuresStrategies {
+			futNames[i] = s.ID
+		}
+		futIdxs := p.MultiSelect("\nSelect futures strategies:", futNames, false)
+		for _, idx := range futIdxs {
+			selectedFuturesStrats = append(selectedFuturesStrats, futuresStrategies[idx].ID)
+		}
+	}
+
+	if len(selectedSpotStrats) == 0 && !includePairs && len(selectedOptStrats) == 0 && !enablePerps && !enableFutures {
 		fmt.Println("No strategies selected. Aborted.")
 		return 1
 	}
@@ -551,6 +660,15 @@ func runInit(args []string) int {
 		perpsDrawdown = p.Float("Perps max drawdown (%)", 5)
 	}
 
+	futuresCapital := 5000.0
+	futuresDrawdown := 5.0
+	futuresFeePerContract := 0.0
+	if enableFutures {
+		futuresCapital = p.Float("Futures capital per strategy ($)", 5000)
+		futuresDrawdown = p.Float("Futures max drawdown (%)", 5)
+		futuresFeePerContract = p.Float("Futures fee per contract ($)", 1.50)
+	}
+
 	// Step 9: Discord.
 	fmt.Println("\n--- Discord Notifications ---")
 	discordEnabled := p.YesNo("Enable Discord notifications?", false)
@@ -574,6 +692,11 @@ func runInit(args []string) int {
 				channelMap["hyperliquid"] = ch
 			}
 		}
+		if enableFutures {
+			if ch := p.String("TopStep channel ID (leave blank to skip)", ""); ch != "" {
+				channelMap["topstep"] = ch
+			}
+		}
 		discordOwnerID = p.String("Your Discord user ID for DM upgrades (leave blank to skip)", "")
 	}
 
@@ -594,33 +717,48 @@ func runInit(args []string) int {
 		perpsStratIDs[i] = s.ID
 	}
 
+	// Collect futures strategy IDs.
+	futuresStratIDs := selectedFuturesStrats
+	if enableFutures && len(futuresStratIDs) == 0 {
+		for _, s := range futuresStrategies {
+			futuresStratIDs = append(futuresStratIDs, s.ID)
+		}
+	}
+
 	opts := InitOptions{
-		OutputPath:      outputPath,
-		Assets:          selectedAssets,
-		EnableSpot:      enableSpot,
-		EnableOptions:   enableOptions,
-		EnablePerps:     enablePerps,
-		OptionPlatforms: optionPlatforms,
-		PerpsMode:       perpsMode,
-		SpotStrategies:  selectedSpotStrats,
-		IncludePairs:    includePairs,
-		OptStrategies:   selectedOptStrats,
-		PerpsStrategies: perpsStratIDs,
-		SpotCapital:     spotCapital,
-		OptionsCapital:  optionsCapital,
-		PerpsCapital:    perpsCapital,
-		SpotDrawdown:    spotDrawdown,
-		OptionsDrawdown: optionsDrawdown,
-		PerpsDrawdown:   perpsDrawdown,
-		DiscordEnabled:  discordEnabled,
-		DiscordOwnerID:  discordOwnerID,
-		ChannelMap:      channelMap,
-		AutoUpdate:      autoUpdate,
+		OutputPath:            outputPath,
+		Assets:                selectedAssets,
+		EnableSpot:            enableSpot,
+		EnableOptions:         enableOptions,
+		EnablePerps:           enablePerps,
+		OptionPlatforms:       optionPlatforms,
+		PerpsMode:             perpsMode,
+		SpotStrategies:        selectedSpotStrats,
+		IncludePairs:          includePairs,
+		OptStrategies:         selectedOptStrats,
+		PerpsStrategies:       perpsStratIDs,
+		SpotCapital:           spotCapital,
+		OptionsCapital:        optionsCapital,
+		PerpsCapital:          perpsCapital,
+		SpotDrawdown:          spotDrawdown,
+		OptionsDrawdown:       optionsDrawdown,
+		PerpsDrawdown:         perpsDrawdown,
+		EnableFutures:         enableFutures,
+		FuturesMode:           futuresMode,
+		FuturesStrategies:     futuresStratIDs,
+		FuturesSymbols:        futuresSymbols,
+		FuturesCapital:        futuresCapital,
+		FuturesDrawdown:       futuresDrawdown,
+		FuturesFeePerContract: futuresFeePerContract,
+		DiscordEnabled:        discordEnabled,
+		DiscordOwnerID:        discordOwnerID,
+		ChannelMap:            channelMap,
+		AutoUpdate:            autoUpdate,
 	}
 
 	cfg := generateConfig(opts)
 
-	// Step 10: Summary + confirm.
+	// Step 11: Summary + confirm.
 	fmt.Println("\n--- Summary ---")
 	fmt.Printf("Output:     %s\n", outputPath)
 	fmt.Printf("Assets:     %s\n", strings.Join(selectedAssets, ", "))

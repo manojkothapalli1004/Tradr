@@ -59,17 +59,24 @@ type ThetaHarvestConfig struct {
 	MinDTEClose     float64 `json:"min_dte_close"`     // Force-close positions with fewer than N days to expiry
 }
 
+// FuturesConfig holds per-contract futures trading parameters.
+type FuturesConfig struct {
+	FeePerContract float64 `json:"fee_per_contract"`
+	MaxContracts   int     `json:"max_contracts,omitempty"`
+}
+
 // StrategyConfig describes a single strategy job.
 type StrategyConfig struct {
 	ID              string              `json:"id"`
-	Type            string              `json:"type"`     // "spot" or "options"
-	Platform        string              `json:"platform"` // "deribit", "ibkr", "binanceus", etc.
+	Type            string              `json:"type"`     // "spot", "options", "perps", or "futures"
+	Platform        string              `json:"platform"` // "deribit", "ibkr", "binanceus", "hyperliquid", "topstep"
 	Script          string              `json:"script"`
 	Args            []string            `json:"args"`
 	Capital         float64             `json:"capital"`
 	MaxDrawdownPct  float64             `json:"max_drawdown_pct"`
 	IntervalSeconds int                 `json:"interval_seconds,omitempty"` // per-strategy override (0 = use global)
 	ThetaHarvest    *ThetaHarvestConfig `json:"theta_harvest,omitempty"`
+	FuturesConfig   *FuturesConfig      `json:"futures,omitempty"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -137,6 +144,8 @@ func LoadConfig(path string) (*Config, error) {
 				cfg.Strategies[i].Platform = "deribit"
 			case strings.HasPrefix(cfg.Strategies[i].ID, "hl-"):
 				cfg.Strategies[i].Platform = "hyperliquid"
+			case strings.HasPrefix(cfg.Strategies[i].ID, "ts-"):
+				cfg.Strategies[i].Platform = "topstep"
 			case cfg.Strategies[i].Type == "options":
 				cfg.Strategies[i].Platform = "deribit"
 			default:
@@ -153,6 +162,8 @@ func LoadConfig(path string) (*Config, error) {
 				cfg.Strategies[i].MaxDrawdownPct = 40 // options are volatile
 			} else if cfg.Strategies[i].Type == "perps" {
 				cfg.Strategies[i].MaxDrawdownPct = 50 // perps: between spot (60) and options (40)
+			} else if cfg.Strategies[i].Type == "futures" {
+				cfg.Strategies[i].MaxDrawdownPct = 45 // futures: prop firm risk rules are strict
 			} else {
 				cfg.Strategies[i].MaxDrawdownPct = 60
 			}
@@ -230,9 +241,27 @@ func ValidateConfig(cfg *Config) error {
 			}
 		}
 
-		// #36: Type must be "spot", "options", or "perps".
-		if sc.Type != "spot" && sc.Type != "options" && sc.Type != "perps" {
-			errs = append(errs, fmt.Sprintf("%s: type must be \"spot\", \"options\", or \"perps\", got %q", prefix, sc.Type))
+		// #36: Type must be "spot", "options", "perps", or "futures".
+		if sc.Type != "spot" && sc.Type != "options" && sc.Type != "perps" && sc.Type != "futures" {
+			errs = append(errs, fmt.Sprintf("%s: type must be \"spot\", \"options\", \"perps\", or \"futures\", got %q", prefix, sc.Type))
+		}
+
+		// Live-mode futures require TopStep API credentials.
+		if sc.Type == "futures" {
+			for _, arg := range sc.Args {
+				if arg == "--mode=live" {
+					if os.Getenv("TOPSTEP_API_KEY") == "" {
+						errs = append(errs, fmt.Sprintf("%s: --mode=live requires TOPSTEP_API_KEY env var", prefix))
+					}
+					if os.Getenv("TOPSTEP_API_SECRET") == "" {
+						errs = append(errs, fmt.Sprintf("%s: --mode=live requires TOPSTEP_API_SECRET env var", prefix))
+					}
+					if os.Getenv("TOPSTEP_ACCOUNT_ID") == "" {
+						errs = append(errs, fmt.Sprintf("%s: --mode=live requires TOPSTEP_ACCOUNT_ID env var", prefix))
+					}
+					break
+				}
+			}
 		}
 
 		// Live-mode perps require HYPERLIQUID_SECRET_KEY env var.

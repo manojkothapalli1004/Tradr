@@ -5,12 +5,13 @@ import (
 	"time"
 )
 
-// Position represents a spot position.
+// Position represents a spot or futures position.
 type Position struct {
-	Symbol   string  `json:"symbol"`
-	Quantity float64 `json:"quantity"`
-	AvgCost  float64 `json:"avg_cost"`
-	Side     string  `json:"side"` // "long" or "short"
+	Symbol     string  `json:"symbol"`
+	Quantity   float64 `json:"quantity"`
+	AvgCost    float64 `json:"avg_cost"`
+	Side       string  `json:"side"`                 // "long" or "short"
+	Multiplier float64 `json:"multiplier,omitempty"` // futures contract multiplier (0 = spot)
 }
 
 // Trade represents a completed trade.
@@ -22,7 +23,7 @@ type Trade struct {
 	Quantity   float64   `json:"quantity"`
 	Price      float64   `json:"price"`
 	Value      float64   `json:"value"`
-	TradeType  string    `json:"trade_type"` // "spot" or "options"
+	TradeType  string    `json:"trade_type"` // "spot", "options", or "futures"
 	Details    string    `json:"details"`
 }
 
@@ -34,7 +35,14 @@ func PortfolioValue(s *StrategyState, prices map[string]float64) float64 {
 		if !ok {
 			price = pos.AvgCost // fallback
 		}
-		if pos.Side == "long" {
+		if pos.Multiplier > 0 {
+			// Futures: PnL-based valuation (contracts * multiplier * price delta)
+			if pos.Side == "long" {
+				total += pos.Quantity * pos.Multiplier * (price - pos.AvgCost)
+			} else {
+				total += pos.Quantity * pos.Multiplier * (pos.AvgCost - price)
+			}
+		} else if pos.Side == "long" {
 			total += pos.Quantity * price
 		} else {
 			// Short: profit = (avg_cost - current_price) * qty
@@ -149,6 +157,161 @@ func ExecuteSpotSignal(s *StrategyState, signal int, symbol string, price float6
 			tradesExecuted++
 		} else {
 			logger.Info("No long position in %s to sell, skipping", symbol)
+		}
+	}
+	return tradesExecuted, nil
+}
+
+// ExecuteFuturesSignal processes a futures signal with whole-contract sizing.
+func ExecuteFuturesSignal(s *StrategyState, signal int, symbol string, price float64, spec ContractSpec, feePerContract float64, maxContracts int, logger *StrategyLogger) (int, error) {
+	if signal == 0 {
+		return 0, nil
+	}
+	tradesExecuted := 0
+	multiplier := spec.Multiplier
+
+	if signal == 1 { // Buy
+		if pos, exists := s.Positions[symbol]; exists && pos.Side == "long" {
+			logger.Info("Already long %s (%d contracts), skipping buy", symbol, int(pos.Quantity))
+			return 0, nil
+		}
+		// Close short if exists
+		if pos, exists := s.Positions[symbol]; exists && pos.Side == "short" {
+			execPrice := ApplySlippage(price)
+			contracts := int(pos.Quantity)
+			pnl := float64(contracts) * multiplier * (pos.AvgCost - execPrice)
+			fee := CalculateFuturesFee(contracts, feePerContract)
+			pnl -= fee
+			s.Cash += pnl
+			trade := Trade{
+				Timestamp:  time.Now().UTC(),
+				StrategyID: s.ID,
+				Symbol:     symbol,
+				Side:       "buy",
+				Quantity:   pos.Quantity,
+				Price:      execPrice,
+				Value:      float64(contracts) * multiplier * execPrice,
+				TradeType:  "futures",
+				Details:    fmt.Sprintf("Close short %d contracts, PnL: $%.2f (fee $%.2f)", contracts, pnl, fee),
+			}
+			s.TradeHistory = append(s.TradeHistory, trade)
+			RecordTradeResult(&s.RiskState, pnl)
+			delete(s.Positions, symbol)
+			logger.Info("Closed short %s %d contracts @ $%.2f (fee $%.2f) | PnL: $%.2f", symbol, contracts, execPrice, fee, pnl)
+			tradesExecuted++
+		}
+		// Open long — whole contracts only
+		budget := s.Cash * 0.95
+		if budget < 1 || price <= 0 || multiplier <= 0 {
+			logger.Info("Insufficient cash ($%.2f) to buy %s futures", s.Cash, symbol)
+			return tradesExecuted, nil
+		}
+		execPrice := ApplySlippage(price)
+		marginPerContract := spec.Margin
+		if marginPerContract <= 0 {
+			marginPerContract = execPrice * multiplier // fallback if margin not set
+		}
+		contracts := int(budget / marginPerContract)
+		if maxContracts > 0 && contracts > maxContracts {
+			contracts = maxContracts
+		}
+		if contracts < 1 {
+			logger.Info("Insufficient cash ($%.2f) for even 1 %s contract (margin=$%.2f)", s.Cash, symbol, marginPerContract)
+			return tradesExecuted, nil
+		}
+		fee := CalculateFuturesFee(contracts, feePerContract)
+		s.Cash -= fee // futures use margin, not full notional; deduct fee only
+		s.Positions[symbol] = &Position{
+			Symbol:     symbol,
+			Quantity:   float64(contracts),
+			AvgCost:    execPrice,
+			Side:       "long",
+			Multiplier: multiplier,
+		}
+		trade := Trade{
+			Timestamp:  time.Now().UTC(),
+			StrategyID: s.ID,
+			Symbol:     symbol,
+			Side:       "buy",
+			Quantity:   float64(contracts),
+			Price:      execPrice,
+			Value:      float64(contracts) * marginPerContract,
+			TradeType:  "futures",
+			Details:    fmt.Sprintf("Open long %d contracts @ $%.2f (fee $%.2f)", contracts, execPrice, fee),
+		}
+		s.TradeHistory = append(s.TradeHistory, trade)
+		logger.Info("BUY %s: %d contracts @ $%.2f (fee $%.2f)", symbol, contracts, execPrice, fee)
+		tradesExecuted++
+
+	} else if signal == -1 { // Sell
+		// Close long if exists
+		if pos, exists := s.Positions[symbol]; exists && pos.Side == "long" {
+			execPrice := ApplySlippage(price)
+			contracts := int(pos.Quantity)
+			pnl := float64(contracts) * multiplier * (execPrice - pos.AvgCost)
+			fee := CalculateFuturesFee(contracts, feePerContract)
+			pnl -= fee
+			s.Cash += pnl
+			trade := Trade{
+				Timestamp:  time.Now().UTC(),
+				StrategyID: s.ID,
+				Symbol:     symbol,
+				Side:       "sell",
+				Quantity:   pos.Quantity,
+				Price:      execPrice,
+				Value:      float64(contracts) * multiplier * execPrice,
+				TradeType:  "futures",
+				Details:    fmt.Sprintf("Close long %d contracts, PnL: $%.2f (fee $%.2f)", contracts, pnl, fee),
+			}
+			s.TradeHistory = append(s.TradeHistory, trade)
+			RecordTradeResult(&s.RiskState, pnl)
+			delete(s.Positions, symbol)
+			logger.Info("SELL %s: %d contracts @ $%.2f (fee $%.2f) | PnL: $%.2f", symbol, contracts, execPrice, fee, pnl)
+			tradesExecuted++
+		}
+		// Open short if no long was closed or after closing long
+		if _, exists := s.Positions[symbol]; !exists {
+			budget := s.Cash * 0.95
+			if budget < 1 || price <= 0 || multiplier <= 0 {
+				logger.Info("Insufficient cash ($%.2f) to short %s futures", s.Cash, symbol)
+				return tradesExecuted, nil
+			}
+			execPrice := ApplySlippage(price)
+			marginPerContract := spec.Margin
+			if marginPerContract <= 0 {
+				marginPerContract = execPrice * multiplier
+			}
+			contracts := int(budget / marginPerContract)
+			if maxContracts > 0 && contracts > maxContracts {
+				contracts = maxContracts
+			}
+			if contracts < 1 {
+				logger.Info("Insufficient cash ($%.2f) for even 1 %s short contract (margin=$%.2f)", s.Cash, symbol, marginPerContract)
+				return tradesExecuted, nil
+			}
+			fee := CalculateFuturesFee(contracts, feePerContract)
+			s.Cash -= fee
+			s.Positions[symbol] = &Position{
+				Symbol:     symbol,
+				Quantity:   float64(contracts),
+				AvgCost:    execPrice,
+				Side:       "short",
+				Multiplier: multiplier,
+			}
+			trade := Trade{
+				Timestamp:  time.Now().UTC(),
+				StrategyID: s.ID,
+				Symbol:     symbol,
+				Side:       "sell",
+				Quantity:   float64(contracts),
+				Price:      execPrice,
+				Value:      float64(contracts) * marginPerContract,
+				TradeType:  "futures",
+				Details:    fmt.Sprintf("Open short %d contracts @ $%.2f (fee $%.2f)", contracts, execPrice, fee),
+			}
+			s.TradeHistory = append(s.TradeHistory, trade)
+			logger.Info("SHORT %s: %d contracts @ $%.2f (fee $%.2f)", symbol, contracts, execPrice, fee)
+			tradesExecuted++
 		}
 	}
 	return tradesExecuted, nil

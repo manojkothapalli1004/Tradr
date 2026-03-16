@@ -104,9 +104,10 @@ The wizard walks through:
 2. **Spot strategies** — momentum, mean reversion, pairs spread (BinanceUS)
 3. **Options strategies** — covered call, cash-secured put; Deribit and/or IBKR
 4. **Perps strategies** — full spot strategy suite on Hyperliquid (paper or live mode)
-5. **Capital & max drawdown** per strategy type
-6. **Discord** — per-platform channel IDs (spot, options, hyperliquid if perps enabled)
-7. **Auto-update** — off / daily / heartbeat (default: off)
+5. **Futures strategies** — momentum, mean_reversion, rsi, macd, breakout on CME futures (TopStep, paper or live mode)
+6. **Capital & max drawdown** per strategy type
+7. **Discord** — per-platform channel IDs (spot, options, hyperliquid if perps enabled, topstep if futures enabled)
+8. **Auto-update** — off / daily / heartbeat (default: off)
 
 A summary is shown before writing. If `scheduler/config.json` already exists, you'll be prompted to confirm overwrite.
 
@@ -182,7 +183,19 @@ Ask (only if perps/hyperliquid strategies will be enabled):
 >
 > Hyperliquid channel ID (or press Enter to skip):
 
-#### 4e. Discord Server (Guild) ID
+#### 4e. TopStep Alerts Channel
+Ask (only if futures/topstep strategies will be enabled):
+> Which Discord channel should receive **TopStep futures** alerts?
+>
+> This channel will get:
+> - Hourly summaries of all TopStep strategy PnL
+> - Immediate trade notifications
+>
+> This can be the same channel as spot, or a different one.
+>
+> TopStep channel ID (or press Enter to skip):
+
+#### 4f. Discord Server (Guild) ID
 Ask:
 > What's the Discord server (guild) ID where these channels are?
 >
@@ -192,7 +205,7 @@ Ask:
 
 Store this for OpenClaw allowlist configuration in Step 7.
 
-#### 4f. Owner ID for DM Upgrades
+#### 4g. Owner ID for DM Upgrades
 Ask:
 > Would you like the bot to DM you directly when a new version is available, and offer to upgrade automatically?
 >
@@ -227,6 +240,11 @@ Ask:
 **If live**, prompt for exchange API keys:
 > Binance API key:
 > Binance API secret:
+
+If futures/TopStep strategies are enabled:
+> TopStep API key:
+> TopStep API secret:
+> TopStep account ID:
 
 Store these for the systemd environment in Step 8.
 
@@ -263,7 +281,7 @@ Ask:
 ## Step 6: Strategy Selection
 
 Ask:
-> go-trader comes with strategies across three groups:
+> go-trader comes with strategies across four groups:
 >
 > **Spot (10 strategies)** — BTC, ETH, SOL on Binance
 >   sma_crossover, ema_crossover, momentum, rsi, bollinger_bands, macd,
@@ -274,6 +292,9 @@ Ask:
 >
 > **IBKR/CME Options (8 strategies)** — BTC, ETH options (CME Micro)
 >   Same 6 strategies as Deribit, for head-to-head comparison
+>
+> **Futures (5 strategies)** — CME contracts on TopStep
+>   momentum, mean_reversion, rsi, macd, breakout
 >
 > Do you want to:
 > 1. **Run all** (recommended for paper trading)
@@ -367,7 +388,7 @@ Using all gathered inputs, generate `scheduler/config.json`.
 Start from `scheduler/config.example.json` as a template. For each enabled strategy, add an entry with:
 - `id`: Use the naming convention `{strategy}-{asset}` for spot, `deribit-{strategy}-{asset}` or `ibkr-{strategy}-{asset}` for options
 - `type`: `"spot"` or `"options"`
-- `script`: `"shared_scripts/check_strategy.py"` (spot), `"shared_scripts/check_options.py"` (options — any platform)
+- `script`: `"shared_scripts/check_strategy.py"` (spot), `"shared_scripts/check_options.py"` (options — any platform), `"shared_scripts/check_topstep.py"` (futures)
 - `args`: Strategy-specific arguments (see config.example.json for format)
 - `capital`: User's chosen amount
 - `max_drawdown_pct`: User's chosen value (spot default: 60, options default: 40)
@@ -377,7 +398,7 @@ Start from `scheduler/config.example.json` as a template. For each enabled strat
 Discord config:
 - `discord.enabled`: true/false based on Step 4
 - `discord.token`: Always `""` (token comes from env var)
-- `discord.channels`: Map of channel IDs for enabled platform types, e.g. `{"spot": "ID_FROM_4b", "options": "ID_FROM_4c", "hyperliquid": "ID_FROM_4d"}` — omit keys for platforms not in use
+- `discord.channels`: Map of channel IDs for enabled platform types, e.g. `{"spot": "ID_FROM_4b", "options": "ID_FROM_4c", "hyperliquid": "ID_FROM_4d", "topstep": "ID_FROM_4e"}` — omit keys for platforms not in use
 - Summary frequency is automatic: options post per-check, spot/hyperliquid post hourly + on trades (no config field needed)
 
 ### 7b. OpenClaw Discord Allowlist (if applicable)
@@ -463,6 +484,13 @@ If live trading, also add:
 ```ini
 Environment="BINANCE_API_KEY={key}"
 Environment="BINANCE_API_SECRET={secret}"
+```
+
+If TopStep live trading:
+```ini
+Environment="TOPSTEP_API_KEY={key}"
+Environment="TOPSTEP_API_SECRET={secret}"
+Environment="TOPSTEP_ACCOUNT_ID={account_id}"
 ```
 
 ```bash
@@ -583,6 +611,7 @@ Create `platforms/<name>/adapter.py` with a class named `<Name>ExchangeAdapter` 
 - Reference adapters:
   - Spot: `platforms/binanceus/adapter.py`
   - Perps: `platforms/hyperliquid/adapter.py`
+  - Futures: `platforms/topstep/adapter.py`
   - Options: `platforms/deribit/adapter.py`
 - If live trading: read credentials from env vars (never hardcode)
 - If paper-only: simulate fills at mid-price; persist state to `platforms/<name>/state.json`
@@ -911,6 +940,7 @@ When the user says `/menu`, "show menu", "what can I configure", "what's availab
    • Deribit     — options trading: BTC, ETH
    • IBKR / CME  — options trading: BTC, ETH (CME Micro contracts, Black-Scholes pricing)
    • Hyperliquid — perps trading: any HL-listed asset (paper + live)
+   • TopStep     — futures trading: ES, NQ, MES, MNQ, CL, GC (paper + live)
    • Custom      — add your own exchange via Step 9 (guided setup)
 
 2. AVAILABLE STRATEGIES
@@ -922,6 +952,8 @@ When the user says `/menu`, "show menu", "what can I configure", "what's availab
      wheel, butterfly  — BTC + ETH each
    IBKR Options (8):
      same 6 strategies as Deribit — BTC + ETH each
+   Futures (5 strategies, TopStep/CME):
+     momentum, mean_reversion, rsi, macd, breakout
 
 3. ADJUSTABLE SETTINGS  (edit scheduler/config.json, then: sudo systemctl restart go-trader)
    Global:
@@ -937,11 +969,12 @@ When the user says `/menu`, "show menu", "what can I configure", "what's availab
      theta_harvest.*   — profit_target_pct, stop_loss_pct, min_dte_close
    Discord:
      enabled           — true/false
-     channel_id        — channel for alerts
+     channels          — map: "spot", "options", "hyperliquid", "topstep"
      summary_interval  — how often to post summaries
    Environment (sudo systemctl edit go-trader):
      DISCORD_BOT_TOKEN, STATUS_AUTH_TOKEN
      BINANCE_API_KEY, BINANCE_API_SECRET
+     TOPSTEP_API_KEY, TOPSTEP_API_SECRET, TOPSTEP_ACCOUNT_ID
 
 4. COMMANDS
    /menu       — this overview
@@ -1016,7 +1049,7 @@ Each entry in the `strategies` array supports:
 | Setting | Key | Default | Description |
 |---------|-----|---------|-------------|
 | Enable Discord | `discord.enabled` | true | Turn Discord notifications on/off |
-| Channels | `discord.channels` | — | Map of channel IDs keyed by platform/type: `"spot"`, `"options"`, `"hyperliquid"`, etc. |
+| Channels | `discord.channels` | — | Map of channel IDs keyed by platform/type: `"spot"`, `"options"`, `"hyperliquid"`, `"topstep"`, etc. |
 | Owner ID | `discord.owner_id` | — | Your Discord user ID — enables DM upgrade prompts and post-upgrade config migration. Use `DISCORD_OWNER_ID` env var (preferred). |
 
 ### Environment Variables
@@ -1030,6 +1063,9 @@ Set via systemd override (`sudo systemctl edit go-trader`):
 | `STATUS_AUTH_TOKEN` | Optional: require Bearer token for /status endpoint |
 | `BINANCE_API_KEY` | Binance API key (live trading only) |
 | `BINANCE_API_SECRET` | Binance API secret (live trading only) |
+| `TOPSTEP_API_KEY` | TopStep API key (futures live trading only) |
+| `TOPSTEP_API_SECRET` | TopStep API secret (futures live trading only) |
+| `TOPSTEP_ACCOUNT_ID` | TopStep account ID (futures live trading only) |
 
 ### Example: Adjusting a Strategy
 
@@ -1110,3 +1146,18 @@ Same as Deribit but with different script and ID prefix:
 ```
 
 **ID convention:** `ibkr-{strategy_short}-{asset}` (same short names as Deribit)
+
+### TopStep Futures Entries
+
+Each TopStep strategy runs on CME futures symbols (ES, NQ, MES, MNQ, CL, GC):
+
+```json
+{"id": "ts-momentum-es", "type": "futures", "script": "shared_scripts/check_topstep.py", "args": ["momentum", "ES", "1h", "--mode=paper"], "capital": 1000, "max_drawdown_pct": 5, "interval_seconds": 3600}
+{"id": "ts-mean_reversion-es", "type": "futures", "script": "shared_scripts/check_topstep.py", "args": ["mean_reversion", "ES", "1h", "--mode=paper"], "capital": 1000, "max_drawdown_pct": 5, "interval_seconds": 3600}
+```
+
+**Strategy arg names:** `momentum`, `mean_reversion`, `rsi`, `macd`, `breakout`
+
+**ID convention:** `ts-{strategy}-{symbol}` (e.g. `ts-momentum-es`, `ts-rsi-nq`)
+
+For live trading, change `--mode=paper` to `--mode=live` and add `--execute` flag. Requires `TOPSTEP_API_KEY`, `TOPSTEP_API_SECRET`, `TOPSTEP_ACCOUNT_ID` env vars.

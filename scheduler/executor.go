@@ -220,6 +220,97 @@ func RunHyperliquidExecute(script, symbol, side string, size float64) (*Hyperliq
 	return &result, stderrStr, nil
 }
 
+// ContractSpec holds CME futures contract specifications from check_topstep.py.
+type ContractSpec struct {
+	TickSize   float64 `json:"tick_size"`
+	TickValue  float64 `json:"tick_value"`
+	Multiplier float64 `json:"multiplier"`
+	Margin     float64 `json:"margin"`
+}
+
+// TopStepResult is the JSON output from check_topstep.py (signal check mode).
+type TopStepResult struct {
+	Strategy     string                 `json:"strategy"`
+	Symbol       string                 `json:"symbol"`
+	Timeframe    string                 `json:"timeframe"`
+	Signal       int                    `json:"signal"`
+	Price        float64                `json:"price"`
+	ContractSpec ContractSpec           `json:"contract_spec"`
+	MarketOpen   bool                   `json:"market_open"`
+	Indicators   map[string]interface{} `json:"indicators"`
+	Mode         string                 `json:"mode"`
+	Platform     string                 `json:"platform"`
+	Timestamp    string                 `json:"timestamp"`
+	Error        string                 `json:"error,omitempty"`
+}
+
+// TopStepFill holds fill details from a live TopStep order.
+type TopStepFill struct {
+	AvgPx          float64 `json:"avg_px"`
+	TotalContracts int     `json:"total_contracts"`
+}
+
+// TopStepExecution is the execution block from check_topstep.py --execute output.
+type TopStepExecution struct {
+	Action    string       `json:"action"`
+	Symbol    string       `json:"symbol"`
+	Contracts int          `json:"contracts"`
+	Fill      *TopStepFill `json:"fill,omitempty"`
+}
+
+// TopStepExecuteResult is the top-level JSON from check_topstep.py --execute.
+type TopStepExecuteResult struct {
+	Execution *TopStepExecution `json:"execution"`
+	Platform  string            `json:"platform"`
+	Timestamp string            `json:"timestamp"`
+	Error     string            `json:"error,omitempty"`
+}
+
+// RunTopStepCheck runs check_topstep.py in signal check mode and parses the result.
+func RunTopStepCheck(script string, args []string) (*TopStepResult, string, error) {
+	stdout, stderr, err := RunPythonScript(script, args)
+	stderrStr := string(stderr)
+	if err != nil {
+		var result TopStepResult
+		if jsonErr := json.Unmarshal(stdout, &result); jsonErr == nil && result.Error != "" {
+			return &result, stderrStr, nil
+		}
+		return nil, stderrStr, fmt.Errorf("script error: %w (stderr: %s)", err, stderrStr)
+	}
+
+	var result TopStepResult
+	if err := json.Unmarshal(stdout, &result); err != nil {
+		return nil, stderrStr, fmt.Errorf("parse output: %w (stdout: %s)", err, string(stdout))
+	}
+	return &result, stderrStr, nil
+}
+
+// RunTopStepExecute runs check_topstep.py in execute mode (live orders).
+func RunTopStepExecute(script, symbol, side string, contracts int) (*TopStepExecuteResult, string, error) {
+	args := []string{
+		"--execute",
+		fmt.Sprintf("--symbol=%s", symbol),
+		fmt.Sprintf("--side=%s", side),
+		fmt.Sprintf("--contracts=%d", contracts),
+		"--mode=live",
+	}
+	stdout, stderr, err := RunPythonScript(script, args)
+	stderrStr := string(stderr)
+	if err != nil {
+		var result TopStepExecuteResult
+		if jsonErr := json.Unmarshal(stdout, &result); jsonErr == nil && result.Error != "" {
+			return &result, stderrStr, nil
+		}
+		return nil, stderrStr, fmt.Errorf("execute error: %w (stderr: %s)", err, stderrStr)
+	}
+
+	var result TopStepExecuteResult
+	if err := json.Unmarshal(stdout, &result); err != nil {
+		return nil, stderrStr, fmt.Errorf("parse execute output: %w (stdout: %s)", err, string(stdout))
+	}
+	return &result, stderrStr, nil
+}
+
 // FetchPrices runs check_price.py and returns a map of symbol→price.
 func FetchPrices(symbols []string) (map[string]float64, error) {
 	stdout, stderr, err := RunPythonScript("shared_scripts/check_price.py", symbols)

@@ -4,7 +4,7 @@
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/44BykmWZsP)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A Go + Python hybrid trading system. A single Go binary (~8MB RAM) orchestrates 50+ paper trading strategies across spot, options, and perpetual futures markets by spawning short-lived Python scripts.
+A Go + Python hybrid trading system. A single Go binary (~8MB RAM) orchestrates 50+ paper trading strategies across spot, options, perpetual futures, and CME futures markets by spawning short-lived Python scripts.
 
 **Spot markets** via Binance US (CCXT): SMA/EMA crossovers, momentum, RSI, Bollinger Bands, MACD, and pairs spread strategies on BTC, ETH, and SOL.
 
@@ -12,9 +12,11 @@ A Go + Python hybrid trading system. A single Go binary (~8MB RAM) orchestrates 
 
 **Perpetual futures** via Hyperliquid: full spot strategy suite on any HL-listed asset, with paper and live trading support.
 
-**Discord alerts**: Per-platform channels for spot, options, and hyperliquid summaries, with immediate trade notifications. When a new release is detected, the bot DMs you directly — reply **yes** and it upgrades, rebuilds, and restarts itself automatically.
+**CME futures** via TopStep: momentum, mean reversion, RSI, MACD, breakout on ES, NQ, MES, MNQ, CL, GC — paper mode uses Yahoo Finance, live mode via TopStepX API.
 
-Supported platforms: Binance US, Deribit, IBKR/CME, Hyperliquid.
+**Discord alerts**: Per-platform channels for spot, options, hyperliquid, and topstep summaries, with immediate trade notifications. When a new release is detected, the bot DMs you directly — reply **yes** and it upgrades, rebuilds, and restarts itself automatically.
+
+Supported platforms: Binance US, Deribit, IBKR/CME, Hyperliquid, TopStep.
 
 ## Community
 
@@ -95,18 +97,20 @@ Go scheduler (always running, ~8MB idle)
     .venv/bin/python3 shared_scripts/check_strategy.py    → JSON signal (spot)
     .venv/bin/python3 shared_scripts/check_options.py     → JSON signal (--platform=deribit|ibkr)
     .venv/bin/python3 shared_scripts/check_hyperliquid.py → JSON signal (perps)
+    .venv/bin/python3 shared_scripts/check_topstep.py     → JSON signal (futures)
     .venv/bin/python3 shared_scripts/check_price.py       → live prices
   ↓ processes signals, executes paper trades, manages risk
   ↓ marks options to market via Deribit REST API (live prices every cycle)
   ↓ saves state → scheduler/state.json (atomic writes, survives restarts)
   ↓ HTTP status → localhost:8099/status
-  ↓ Discord → per-platform channels (spot, options, hyperliquid)
+  ↓ Discord → per-platform channels (spot, options, hyperliquid, topstep)
 
 Platform adapters (Python):
   platforms/binanceus/adapter.py  — spot (CCXT)
   platforms/deribit/adapter.py    — options (live quotes, real expiries/strikes)
   platforms/ibkr/adapter.py       — options (CME Micro, Black-Scholes pricing)
   platforms/hyperliquid/adapter.py — perps (paper + live, SDK)
+  platforms/topstep/adapter.py    — futures (CME, paper via yfinance + live via TopStepX)
 ```
 
 Python gets the quant libraries (pandas, numpy, scipy, CCXT). Go gets memory efficiency. 50+ strategies cost ~220MB peak for ~30 seconds, then ~8MB idle.
@@ -150,6 +154,18 @@ Full spot strategy suite on Hyperliquid perpetual futures. Strategies are auto-d
 
 Live mode requires `HYPERLIQUID_SECRET_KEY` env var. Paper mode simulates trades without a key.
 
+### Futures (5 strategies, 1h interval, ES/NQ/MES/MNQ/CL/GC)
+
+| Strategy | Description |
+|----------|-------------|
+| `momentum` | Rate of change breakouts |
+| `mean_reversion` | Statistical mean reversion |
+| `rsi` | Buy oversold, sell overbought |
+| `macd` | MACD/signal line crossovers |
+| `breakout` | Price breakout detection |
+
+CME futures on TopStep. Live mode requires `TOPSTEP_API_KEY`, `TOPSTEP_API_SECRET`, `TOPSTEP_ACCOUNT_ID` env vars. Paper mode uses Yahoo Finance for price data.
+
 ---
 
 ## Platforms
@@ -160,6 +176,7 @@ Live mode requires `HYPERLIQUID_SECRET_KEY` env var. Paper mode simulates trades
 | Deribit | Options | BTC, ETH | Live quotes, real expiries/strikes |
 | IBKR/CME | Options | BTC, ETH | CME Micro contracts, Black-Scholes pricing |
 | Hyperliquid | Perps | BTC, ETH, SOL | Paper + live trading via SDK |
+| TopStep | Futures | ES, NQ, MES, MNQ, CL, GC | Paper (yfinance) + live trading via TopStepX API |
 
 ---
 
@@ -184,11 +201,14 @@ Use `./go-trader init` (interactive) or `./go-trader init --json '...'` (scripte
     "enabled": true,
     "token": "",
     "owner_id": "",
-    "channels": { "spot": "CHANNEL_ID", "options": "CHANNEL_ID", "hyperliquid": "CHANNEL_ID" }
+    "channels": { "spot": "CHANNEL_ID", "options": "CHANNEL_ID", "hyperliquid": "CHANNEL_ID", "topstep": "CHANNEL_ID" }
   },
   "platforms": {
     "hyperliquid": {
       "state_file": "platforms/hyperliquid/state.json"
+    },
+    "topstep": {
+      "state_file": "platforms/topstep/state.json"
     }
   },
   "strategies": [ ... ]
@@ -254,7 +274,7 @@ To get your Discord user ID: right-click your username in Discord → **Copy Use
 | `discord.enabled` | Enable/disable Discord notifications |
 | `discord.token` | Leave blank — use `DISCORD_BOT_TOKEN` env var |
 | `discord.owner_id` | Your Discord user ID — enables DM upgrade prompts and post-upgrade config migration. Use `DISCORD_OWNER_ID` env var. |
-| `discord.channels` | Map of channel IDs keyed by platform/type — `"spot"`, `"options"`, `"hyperliquid"`, etc. Options post per-check; others post hourly + on trades. |
+| `discord.channels` | Map of channel IDs keyed by platform/type — `"spot"`, `"options"`, `"hyperliquid"`, `"topstep"`, etc. Options post per-check; others post hourly + on trades. |
 | `config_version` | Schema version (set automatically by `go-trader init`; migration runs on startup when behind current version) |
 
 ### Strategy Entry
@@ -262,8 +282,8 @@ To get your Discord user ID: right-click your username in Discord → **Copy Use
 | Field | Description | Default |
 |-------|-------------|---------|
 | `id` | Unique identifier (e.g., `momentum-btc`, `hl-momentum-btc`) | Required |
-| `type` | `"spot"`, `"options"`, or `"perps"` | Required |
-| `platform` | `"binanceus"`, `"deribit"`, `"ibkr"`, or `"hyperliquid"` | Required |
+| `type` | `"spot"`, `"options"`, `"perps"`, or `"futures"` | Required |
+| `platform` | `"binanceus"`, `"deribit"`, `"ibkr"`, `"hyperliquid"`, or `"topstep"` | Required |
 | `script` | Python script path (relative) | Required |
 | `args` | Arguments passed to script | Required |
 | `capital` | Starting capital in USD | 1000 |
@@ -337,6 +357,7 @@ journalctl -u go-trader -n 50           # recent logs
 | Deribit Options | 0.03% of premium | — |
 | IBKR/CME Options | $0.25/contract | — |
 | Hyperliquid Perps | 0.035% taker | ±0.05% |
+| TopStep Futures | Per-contract (configurable) | ±0.05% |
 
 ---
 
@@ -370,14 +391,16 @@ go-trader/
 │   ├── check_strategy.py   # Spot checker (Binance US via CCXT)
 │   ├── check_options.py    # Options checker (--platform=deribit|ibkr)
 │   ├── check_hyperliquid.py # Hyperliquid perps checker
+│   ├── check_topstep.py    # TopStep futures checker
 │   └── check_price.py      # Multi-symbol price fetcher
 ├── platforms/              # Platform-specific adapters
 │   ├── binanceus/          # BinanceUS spot adapter
 │   ├── deribit/            # Deribit options adapter
 │   ├── ibkr/               # IBKR/CME options adapter
-│   └── hyperliquid/        # Hyperliquid perps adapter
+│   ├── hyperliquid/        # Hyperliquid perps adapter
+│   └── topstep/            # TopStep futures adapter
 ├── shared_tools/           # Shared Python utilities (pricing, exchange_base, storage)
-├── shared_strategies/      # Shared strategy logic (spot/, options/)
+├── shared_strategies/      # Shared strategy logic (spot/, options/, futures/)
 ├── core/                   # Legacy data utilities (used by backtest)
 ├── strategies/             # Legacy spot strategy logic (used by backtest)
 ├── backtest/               # Backtesting tools
@@ -407,6 +430,7 @@ go-trader/
 | Strategy not trading | Check circuit breaker in `/status`, verify params |
 | Reset positions | `cp scheduler/state.example.json scheduler/state.json && systemctl restart go-trader` |
 | Hyperliquid live mode fails | Set `HYPERLIQUID_SECRET_KEY` env var; paper mode works without it |
+| TopStep live mode fails | Set `TOPSTEP_API_KEY`, `TOPSTEP_API_SECRET`, `TOPSTEP_ACCOUNT_ID` env vars |
 
 ---
 
