@@ -62,3 +62,16 @@ func CalculateOptionFee(platform string, premiumUSD, quantity float64) float64 {
 	}
 	return CalculateDeribitOptionFee(premiumUSD)
 }
+
+// CalculateFuturesFee calculates per-contract fee for futures trades.
+func CalculateFuturesFee(contracts int, feePerContract float64) float64 {
+	return float64(contracts) * feePerContract
+}
+
+// CalculatePlatformFuturesFee reads fee from strategy config and calculates total fee.
+func CalculatePlatformFuturesFee(sc StrategyConfig, contracts int) float64 {
+	if sc.FuturesConfig != nil && sc.FuturesConfig.FeePerContract > 0 {
+		return CalculateFuturesFee(contracts, sc.FuturesConfig.FeePerContract)
+	}
+	return 0
+}

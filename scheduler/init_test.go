@@ -13,6 +13,7 @@ func init() {
 	spotStrategies = defaultSpotStrategies
 	optionsStrategies = defaultOptionsStrategies
 	perpsStrategies = defaultPerpsStrategies
+	futuresStrategies = defaultFuturesStrategies
 }
 
 // baseOpts returns an InitOptions suitable as a starting point for tests.
@@ -38,22 +39,28 @@ func baseOpts() InitOptions {
 
 func TestGenerateConfig_AllTypes(t *testing.T) {
 	opts := InitOptions{
-		Assets:          []string{"BTC", "ETH", "SOL"},
-		EnableSpot:      true,
-		EnableOptions:   true,
-		EnablePerps:     true,
-		OptionPlatforms: []string{"deribit"},
-		PerpsMode:       "paper",
-		SpotStrategies:  []string{"momentum"},
-		IncludePairs:    true,
-		OptStrategies:   []string{"vol_mean_reversion"},
-		PerpsStrategies: []string{"momentum"},
-		SpotCapital:     1000,
-		OptionsCapital:  5000,
-		PerpsCapital:    1000,
-		SpotDrawdown:    5,
-		OptionsDrawdown: 10,
-		PerpsDrawdown:   5,
+		Assets:            []string{"BTC", "ETH", "SOL"},
+		EnableSpot:        true,
+		EnableOptions:     true,
+		EnablePerps:       true,
+		EnableFutures:     true,
+		OptionPlatforms:   []string{"deribit"},
+		PerpsMode:         "paper",
+		FuturesMode:       "paper",
+		SpotStrategies:    []string{"momentum"},
+		IncludePairs:      true,
+		OptStrategies:     []string{"vol_mean_reversion"},
+		PerpsStrategies:   []string{"momentum"},
+		FuturesStrategies: []string{"momentum"},
+		FuturesSymbols:    []string{"ES"},
+		SpotCapital:       1000,
+		OptionsCapital:    5000,
+		PerpsCapital:      1000,
+		FuturesCapital:    5000,
+		SpotDrawdown:      5,
+		OptionsDrawdown:   10,
+		PerpsDrawdown:     5,
+		FuturesDrawdown:   5,
 	}
 	cfg := generateConfig(opts)
 
@@ -61,9 +68,10 @@ func TestGenerateConfig_AllTypes(t *testing.T) {
 	// pairs: (BTC,ETH),(BTC,SOL),(ETH,SOL) = 3 pairs
 	// options deribit × vol × (BTC,ETH) = 2  (SOL skipped)
 	// perps momentum × 3 assets = 3
-	// total = 11
-	if len(cfg.Strategies) != 11 {
-		t.Errorf("expected 11 strategies, got %d", len(cfg.Strategies))
+	// futures momentum × 1 symbol = 1
+	// total = 12
+	if len(cfg.Strategies) != 12 {
+		t.Errorf("expected 12 strategies, got %d", len(cfg.Strategies))
 		for _, s := range cfg.Strategies {
 			t.Logf("  %s (%s)", s.ID, s.Type)
 		}
@@ -611,5 +619,133 @@ func TestGenerateConfig_PerpsMultipleStrategies(t *testing.T) {
 	}
 	if !ids["hl-rmc-btc"] {
 		t.Error("expected hl-rmc-btc")
+	}
+}
+
+func TestGenerateConfig_FuturesEnabled(t *testing.T) {
+	opts := baseOpts()
+	opts.EnableSpot = false
+	opts.EnableFutures = true
+	opts.FuturesMode = "paper"
+	opts.FuturesStrategies = []string{"momentum"}
+	opts.FuturesSymbols = []string{"ES", "MES"}
+	opts.FuturesCapital = 5000
+	opts.FuturesDrawdown = 5
+	opts.FuturesFeePerContract = 1.50
+
+	cfg := generateConfig(opts)
+
+	// 1 strategy × 2 symbols = 2 futures strategies
+	if len(cfg.Strategies) != 2 {
+		t.Fatalf("expected 2 futures strategies, got %d", len(cfg.Strategies))
+		for _, s := range cfg.Strategies {
+			t.Logf("  %s (%s)", s.ID, s.Type)
+		}
+	}
+
+	ids := map[string]bool{}
+	for _, s := range cfg.Strategies {
+		ids[s.ID] = true
+		if s.Type != "futures" {
+			t.Errorf("expected futures type, got %s for %s", s.Type, s.ID)
+		}
+		if s.Platform != "topstep" {
+			t.Errorf("expected topstep platform, got %s for %s", s.Platform, s.ID)
+		}
+		if s.Script != "shared_scripts/check_topstep.py" {
+			t.Errorf("expected check_topstep.py, got %s for %s", s.Script, s.ID)
+		}
+		if s.Capital != 5000 {
+			t.Errorf("expected capital=5000, got %.0f for %s", s.Capital, s.ID)
+		}
+		if s.MaxDrawdownPct != 5 {
+			t.Errorf("expected drawdown=5, got %.0f for %s", s.MaxDrawdownPct, s.ID)
+		}
+		if s.FuturesConfig == nil {
+			t.Errorf("expected FuturesConfig to be set for %s", s.ID)
+		} else if s.FuturesConfig.FeePerContract != 1.50 {
+			t.Errorf("expected fee_per_contract=1.50, got %.2f for %s", s.FuturesConfig.FeePerContract, s.ID)
+		}
+	}
+
+	if !ids["ts-momentum-es"] {
+		t.Error("expected ts-momentum-es")
+	}
+	if !ids["ts-momentum-mes"] {
+		t.Error("expected ts-momentum-mes")
+	}
+
+	// TopStep platform config should be added
+	if _, ok := cfg.Platforms["topstep"]; !ok {
+		t.Error("expected topstep platform config when futures enabled")
+	}
+}
+
+func TestGenerateConfig_FuturesScriptAndArgs(t *testing.T) {
+	opts := baseOpts()
+	opts.EnableSpot = false
+	opts.EnableFutures = true
+	opts.FuturesMode = "live"
+	opts.FuturesStrategies = []string{"momentum"}
+	opts.FuturesSymbols = []string{"ES"}
+	opts.FuturesCapital = 5000
+	opts.FuturesDrawdown = 5
+
+	cfg := generateConfig(opts)
+
+	if len(cfg.Strategies) != 1 {
+		t.Fatalf("expected 1 futures strategy, got %d", len(cfg.Strategies))
+	}
+	s := cfg.Strategies[0]
+	if s.ID != "ts-momentum-es" {
+		t.Errorf("expected ts-momentum-es, got %s", s.ID)
+	}
+	if len(s.Args) != 4 || s.Args[0] != "momentum" || s.Args[1] != "ES" || s.Args[2] != "1h" || s.Args[3] != "--mode=live" {
+		t.Errorf("unexpected futures args: %v", s.Args)
+	}
+}
+
+func TestGenerateConfig_FuturesNoFeeConfig(t *testing.T) {
+	opts := baseOpts()
+	opts.EnableSpot = false
+	opts.EnableFutures = true
+	opts.FuturesMode = "paper"
+	opts.FuturesStrategies = []string{"momentum"}
+	opts.FuturesSymbols = []string{"ES"}
+	opts.FuturesCapital = 5000
+	opts.FuturesDrawdown = 5
+	// No fee per contract set
+
+	cfg := generateConfig(opts)
+
+	s := cfg.Strategies[0]
+	if s.FuturesConfig != nil {
+		t.Errorf("expected nil FuturesConfig when fee is 0, got %+v", s.FuturesConfig)
+	}
+}
+
+func TestRunInitFromJSON_FuturesEnabled(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "config.json")
+	jsonStr := `{"assets":["BTC"],"enableFutures":true,"futuresSymbols":["ES","MES"],"futuresStrategies":["momentum"],"futuresCapital":5000,"futuresDrawdown":5,"futuresFeePerContract":1.50}`
+	code := runInitFromJSON(jsonStr, out)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("expected output file: %v", err)
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	futuresCount := 0
+	for _, s := range cfg.Strategies {
+		if s.Type == "futures" {
+			futuresCount++
+		}
+	}
+	if futuresCount != 2 {
+		t.Errorf("expected 2 futures strategies, got %d", futuresCount)
 	}
 }

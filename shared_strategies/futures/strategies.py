@@ -1,0 +1,159 @@
+"""
+Futures strategy engine — strategies optimized for CME futures trading.
+Reuses indicator logic from shared_tools and spot strategies where applicable.
+Each strategy takes a DataFrame with OHLCV data and returns it with a 'signal' column.
+signal: 1 = buy, -1 = sell, 0 = hold
+"""
+
+import sys
+import os
+import json
+import numpy as np
+import pandas as pd
+from typing import Dict, List, Optional
+
+# Add shared_strategies/spot/ to path for indicator functions (sma, ema)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'spot'))
+
+from indicators import sma, ema
+
+# ─────────────────────────────────────────────
+# Strategy registry
+# ─────────────────────────────────────────────
+
+STRATEGY_REGISTRY: Dict[str, dict] = {}
+
+
+def register_strategy(name: str, description: str, default_params: dict):
+    def decorator(fn):
+        STRATEGY_REGISTRY[name] = {
+            "fn": fn,
+            "description": description,
+            "default_params": default_params,
+        }
+        return fn
+    return decorator
+
+
+def get_strategy(name: str) -> dict:
+    if name not in STRATEGY_REGISTRY:
+        raise ValueError(f"Unknown strategy: {name}. Available: {list(STRATEGY_REGISTRY.keys())}")
+    return STRATEGY_REGISTRY[name]
+
+
+def list_strategies() -> List[str]:
+    return list(STRATEGY_REGISTRY.keys())
+
+
+def apply_strategy(name: str, df: pd.DataFrame, params: Optional[dict] = None) -> pd.DataFrame:
+    strat = get_strategy(name)
+    p = {**strat["default_params"], **(params or {})}
+    return strat["fn"](df, **p)
+
+
+# ─────────────────────────────────────────────
+# Strategy implementations
+# ─────────────────────────────────────────────
+
+@register_strategy(
+    "momentum",
+    "Momentum — trend following on futures using rate of change",
+    {"roc_period": 14, "threshold": 3.0}
+)
+def momentum_strategy(df: pd.DataFrame, roc_period: int = 14, threshold: float = 3.0) -> pd.DataFrame:
+    result = df.copy()
+    result["roc"] = ((result["close"] - result["close"].shift(roc_period)) / result["close"].shift(roc_period)) * 100
+    result["signal"] = 0
+    result.loc[(result["roc"] > threshold) & (result["roc"].shift(1) <= threshold), "signal"] = 1
+    result.loc[(result["roc"] < -threshold) & (result["roc"].shift(1) >= -threshold), "signal"] = -1
+    return result
+
+
+@register_strategy(
+    "mean_reversion",
+    "Mean Reversion — range-bound index futures trading",
+    {"lookback": 30, "entry_std": 1.5, "exit_std": 0.5}
+)
+def mean_reversion_strategy(df: pd.DataFrame, lookback: int = 30, entry_std: float = 1.5, exit_std: float = 0.5) -> pd.DataFrame:
+    result = df.copy()
+    result["rolling_mean"] = result["close"].rolling(window=lookback).mean()
+    result["rolling_std"] = result["close"].rolling(window=lookback).std()
+    result["z_score"] = (result["close"] - result["rolling_mean"]) / result["rolling_std"]
+    result["signal"] = 0
+    result.loc[(result["z_score"] > -entry_std) & (result["z_score"].shift(1) <= -entry_std), "signal"] = 1
+    result.loc[(result["z_score"] < exit_std) & (result["z_score"].shift(1) >= exit_std), "signal"] = -1
+    return result
+
+
+@register_strategy(
+    "rsi",
+    "RSI — overbought/oversold signals for futures",
+    {"period": 14, "overbought": 70, "oversold": 30}
+)
+def rsi_strategy(df: pd.DataFrame, period: int = 14, overbought: float = 70, oversold: float = 30) -> pd.DataFrame:
+    result = df.copy()
+    delta = result["close"].diff()
+    gain = delta.clip(lower=0)
+    loss = (-delta).clip(lower=0)
+    avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    result["rsi"] = 100 - (100 / (1 + rs))
+    result["signal"] = 0
+    result.loc[(result["rsi"] > oversold) & (result["rsi"].shift(1) <= oversold), "signal"] = 1
+    result.loc[(result["rsi"] < overbought) & (result["rsi"].shift(1) >= overbought), "signal"] = -1
+    return result
+
+
+@register_strategy(
+    "macd",
+    "MACD — momentum crossover for futures",
+    {"fast_period": 12, "slow_period": 26, "signal_period": 9}
+)
+def macd_strategy(df: pd.DataFrame, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9) -> pd.DataFrame:
+    result = df.copy()
+    ema_fast = ema(result["close"], fast_period)
+    ema_slow = ema(result["close"], slow_period)
+    result["macd_line"] = ema_fast - ema_slow
+    result["macd_signal"] = ema(result["macd_line"], signal_period)
+    result["macd_hist"] = result["macd_line"] - result["macd_signal"]
+    result["position"] = np.where(result["macd_line"] > result["macd_signal"], 1, 0)
+    result["signal"] = result["position"].diff()
+    return result
+
+
+@register_strategy(
+    "breakout",
+    "Breakout — trade breakouts from overnight/session range",
+    {"lookback": 20, "atr_period": 14, "atr_multiplier": 1.5}
+)
+def breakout_strategy(df: pd.DataFrame, lookback: int = 20, atr_period: int = 14, atr_multiplier: float = 1.5) -> pd.DataFrame:
+    result = df.copy()
+    result["high_roll"] = result["high"].rolling(window=lookback).max()
+    result["low_roll"] = result["low"].rolling(window=lookback).min()
+    # ATR for confirmation
+    tr = pd.concat([
+        result["high"] - result["low"],
+        (result["high"] - result["close"].shift(1)).abs(),
+        (result["low"] - result["close"].shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    result["atr"] = tr.rolling(window=atr_period).mean()
+    result["signal"] = 0
+    # Breakout above range high with ATR confirmation
+    breakout_up = (result["close"] > result["high_roll"].shift(1)) & (tr > result["atr"] * atr_multiplier)
+    result.loc[breakout_up & ~breakout_up.shift(1, fill_value=False), "signal"] = 1
+    # Breakdown below range low with ATR confirmation
+    breakout_down = (result["close"] < result["low_roll"].shift(1)) & (tr > result["atr"] * atr_multiplier)
+    result.loc[breakout_down & ~breakout_down.shift(1, fill_value=False), "signal"] = -1
+    return result
+
+
+if __name__ == "__main__":
+    if "--list-json" in sys.argv:
+        print(json.dumps([{"id": name, "description": STRATEGY_REGISTRY[name]["description"]} for name in list_strategies()]))
+    else:
+        print(f"Registered strategies: {list_strategies()}")
+        for name in list_strategies():
+            s = STRATEGY_REGISTRY[name]
+            print(f"  {name}: {s['description']}")
+            print(f"    Defaults: {s['default_params']}")

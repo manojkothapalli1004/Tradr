@@ -374,6 +374,16 @@ func main() {
 							}
 						}
 					}
+					var tsCash float64
+					var tsContracts float64
+					if sc.Type == "futures" && topstepIsLive(sc.Args) {
+						tsCash = stratState.Cash
+						if sym := topstepSymbol(sc.Args); sym != "" {
+							if pos, ok := stratState.Positions[sym]; ok {
+								tsContracts = pos.Quantity
+							}
+						}
+					}
 					mu.RUnlock()
 
 					// Phase 2: Lock — CheckRisk (fast, no I/O)
@@ -427,6 +437,19 @@ func main() {
 							}
 							mu.Lock()
 							trades, detail = executeHyperliquidResult(sc, stratState, result, execResult, signalStr, price, logger)
+							mu.Unlock()
+						}
+					case "futures":
+						if result, signalStr, price, ok := runTopStepCheck(sc, prices, logger); ok {
+							prices[result.Symbol] = price
+							var execResult *TopStepExecuteResult
+							if topstepIsLive(sc.Args) && result.Signal != 0 {
+								if er, ok2 := runTopStepExecuteOrder(sc, result, price, tsCash, tsContracts, logger); ok2 {
+									execResult = er
+								}
+							}
+							mu.Lock()
+							trades, detail = executeTopStepResult(sc, stratState, result, execResult, signalStr, price, logger)
 							mu.Unlock()
 						}
 					default:
@@ -817,6 +840,145 @@ func executeHyperliquidResult(sc StrategyConfig, s *StrategyState, result *Hyper
 	}
 
 	trades, err := ExecuteSpotSignal(s, result.Signal, result.Symbol, fillPrice, logger)
+	if err != nil {
+		logger.Error("Trade execution failed: %v", err)
+		return 0, ""
+	}
+
+	detail := ""
+	if trades > 0 {
+		prefix := ""
+		if execResult != nil {
+			prefix = "LIVE "
+		}
+		detail = fmt.Sprintf("[%s] %s%s %s @ $%.2f", sc.ID, prefix, signalStr, result.Symbol, fillPrice)
+	}
+	return trades, detail
+}
+
+// topstepIsLive reports whether --mode=live appears in strategy args.
+func topstepIsLive(args []string) bool {
+	for _, arg := range args {
+		if arg == "--mode=live" {
+			return true
+		}
+	}
+	return false
+}
+
+// topstepSymbol extracts the futures symbol from strategy args (e.g. "ES").
+func topstepSymbol(args []string) string {
+	if len(args) >= 2 {
+		return args[1]
+	}
+	return ""
+}
+
+// runTopStepCheck runs check_topstep.py signal-check mode (Phase 3, no lock).
+func runTopStepCheck(sc StrategyConfig, prices map[string]float64, logger *StrategyLogger) (*TopStepResult, string, float64, bool) {
+	logger.Info("Running: python3 %s %v", sc.Script, sc.Args)
+
+	result, stderr, err := RunTopStepCheck(sc.Script, sc.Args)
+	if err != nil {
+		logger.Error("Script failed: %v", err)
+		if stderr != "" {
+			logger.Error("stderr: %s", stderr)
+		}
+		return nil, "", 0, false
+	}
+	if stderr != "" {
+		logger.Info("stderr: %s", stderr)
+	}
+	if result.Error != "" {
+		logger.Error("Script returned error: %s", result.Error)
+		return nil, "", 0, false
+	}
+
+	if !result.MarketOpen {
+		logger.Info("Market closed for %s, skipping", result.Symbol)
+		return nil, "", 0, false
+	}
+
+	signalStr := "HOLD"
+	if result.Signal == 1 {
+		signalStr = "BUY"
+	} else if result.Signal == -1 {
+		signalStr = "SELL"
+	}
+	logger.Info("Signal: %s | %s @ $%.2f [%s]", signalStr, result.Symbol, result.Price, result.Mode)
+
+	price := result.Price
+	if price <= 0 {
+		if p, ok := prices[result.Symbol]; ok {
+			price = p
+		}
+	}
+	if price <= 0 {
+		logger.Error("No price available for %s", result.Symbol)
+		return nil, "", 0, false
+	}
+	return result, signalStr, price, true
+}
+
+// runTopStepExecuteOrder places a live futures order (Phase 3, no lock).
+func runTopStepExecuteOrder(sc StrategyConfig, result *TopStepResult, price, cash, posQty float64, logger *StrategyLogger) (*TopStepExecuteResult, bool) {
+	isBuy := result.Signal == 1
+	var contracts int
+	if isBuy {
+		budget := cash * 0.95
+		multiplier := result.ContractSpec.Multiplier
+		if budget < 1 || price <= 0 || multiplier <= 0 {
+			logger.Info("Insufficient cash ($%.2f) for live buy", cash)
+			return nil, false
+		}
+		contracts = int(budget / (price * multiplier))
+		if contracts < 1 {
+			logger.Info("Insufficient cash ($%.2f) for even 1 contract", cash)
+			return nil, false
+		}
+	} else {
+		if posQty <= 0 {
+			logger.Info("No position to close for %s", result.Symbol)
+			return nil, false
+		}
+		contracts = int(posQty)
+	}
+
+	side := "buy"
+	if !isBuy {
+		side = "sell"
+	}
+	logger.Info("Placing live %s %s contracts=%d", side, result.Symbol, contracts)
+
+	execResult, stderr, err := RunTopStepExecute(sc.Script, result.Symbol, side, contracts)
+	if stderr != "" {
+		logger.Info("execute stderr: %s", stderr)
+	}
+	if err != nil {
+		logger.Error("Live execute failed: %v", err)
+		return nil, false
+	}
+	if execResult.Error != "" {
+		logger.Error("Live execute returned error: %s", execResult.Error)
+		return nil, false
+	}
+	return execResult, true
+}
+
+// executeTopStepResult applies a TopStep futures result to state. Must be called under Lock.
+func executeTopStepResult(sc StrategyConfig, s *StrategyState, result *TopStepResult, execResult *TopStepExecuteResult, signalStr string, price float64, logger *StrategyLogger) (int, string) {
+	fillPrice := price
+	if execResult != nil && execResult.Execution != nil && execResult.Execution.Fill != nil && execResult.Execution.Fill.AvgPx > 0 {
+		fillPrice = execResult.Execution.Fill.AvgPx
+		logger.Info("Live fill at $%.2f (signal was $%.2f)", fillPrice, price)
+	}
+
+	var feePerContract float64
+	if sc.FuturesConfig != nil {
+		feePerContract = sc.FuturesConfig.FeePerContract
+	}
+
+	trades, err := ExecuteFuturesSignal(s, result.Signal, result.Symbol, fillPrice, result.ContractSpec, feePerContract, logger)
 	if err != nil {
 		logger.Error("Trade execution failed: %v", err)
 		return 0, ""
