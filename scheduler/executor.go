@@ -23,6 +23,7 @@ type SpotResult struct {
 	Signal     int                    `json:"signal"`
 	Price      float64                `json:"price"`
 	Indicators map[string]interface{} `json:"indicators"`
+	Regime     string                 `json:"regime,omitempty"`
 	Timestamp  string                 `json:"timestamp"`
 	Error      string                 `json:"error,omitempty"`
 }

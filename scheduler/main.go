@@ -442,9 +442,18 @@ func main() {
 					switch sc.Type {
 					case "spot":
 						if result, signalStr, price, ok := runSpotCheck(sc, prices, logger); ok {
-							mu.Lock()
-							trades, detail = executeSpotResult(sc, stratState, result, signalStr, price, logger)
-							mu.Unlock()
+							if result.Regime != "" {
+								logger.Info("Regime: %s", result.Regime)
+							}
+							if result.Signal != 0 {
+								if allowed, reason := CheckRegimeGate(result.Strategy, result.Regime); !allowed {
+									logger.Info("REGIME_BLOCK signal=%s regime=%s reason=%s", signalStr, result.Regime, reason)
+								} else {
+									mu.Lock()
+									trades, detail = executeSpotResult(sc, stratState, result, signalStr, price, logger)
+									mu.Unlock()
+								}
+							}
 						}
 					case "options":
 						if result, signalStr, ok := runOptionsCheck(sc, posJSON, logger); ok {
@@ -690,7 +699,8 @@ func runSpotCheck(sc StrategyConfig, prices map[string]float64, logger *Strategy
 
 // executeSpotResult applies a spot signal to state. Must be called under Lock.
 func executeSpotResult(sc StrategyConfig, s *StrategyState, result *SpotResult, signalStr string, price float64, logger *StrategyLogger) (int, string) {
-	trades, err := ExecuteSpotSignal(s, result.Signal, result.Symbol, price, logger)
+	atr := extractATR(result.Indicators)
+	trades, err := ExecuteSpotSignal(s, result.Signal, result.Symbol, price, atr, logger)
 	if err != nil {
 		logger.Error("Trade execution failed: %v", err)
 		return 0, ""
@@ -870,7 +880,8 @@ func executeHyperliquidResult(sc StrategyConfig, s *StrategyState, result *Hyper
 		logger.Info("Live fill at $%.2f (mid was $%.2f)", fillPrice, price)
 	}
 
-	trades, err := ExecuteSpotSignal(s, result.Signal, result.Symbol, fillPrice, logger)
+	atr := extractATR(result.Indicators)
+	trades, err := ExecuteSpotSignal(s, result.Signal, result.Symbol, fillPrice, atr, logger)
 	if err != nil {
 		logger.Error("Trade execution failed: %v", err)
 		return 0, ""
@@ -1017,7 +1028,8 @@ func executeTopStepResult(sc StrategyConfig, s *StrategyState, result *TopStepRe
 		maxContracts = sc.FuturesConfig.MaxContracts
 	}
 
-	trades, err := ExecuteFuturesSignal(s, result.Signal, result.Symbol, fillPrice, result.ContractSpec, feePerContract, maxContracts, logger)
+	atr := extractATR(result.Indicators)
+	trades, err := ExecuteFuturesSignal(s, result.Signal, result.Symbol, fillPrice, atr, result.ContractSpec, feePerContract, maxContracts, logger)
 	if err != nil {
 		logger.Error("Trade execution failed: %v", err)
 		return 0, ""

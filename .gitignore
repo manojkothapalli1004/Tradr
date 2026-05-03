@@ -1,15 +1,64 @@
 __pycache__/
 *.pyc
 *.pyo
+*.sqlite
+*.sqlite3
 trading_bot.db
+*.db
 *.db-wal
 *.db-shm
 .env
+.env.*
+!.env.example
 trading-scheduler
 # Compiled binaries
+/tradr-bot
 /go-trader
 logs/
 .venv/
 scheduler/config.json
 scheduler/state.json
 .worktrees/
+
+# Runtime state — per-bot live state files (never publish)
+paper_trading_state.json
+paper_trading_research_state.json
+options_trading_state.json
+options_bot/state.json
+signal_trading/state.json
+research_manager/experiment_journal.json
+*_backup*.json
+*state*.json.bak.*
+
+# PID files
+*.pid
+
+# Log files at any depth
+*.log
+
+# Backup snapshots (timestamped or named)
+*.bak
+*.bak.*
+backups/
+
+# Old version snapshots — local working dirs
+v1_original/
+v2_trailing_stop/
+
+# Local working notes (private, not for public repo)
+CONTEXT.md
+STATUS.md
+WORKLOG.md
+HANDOFF.md
+PAPER_TRADING.md
+README_PAPER_TRADING.md
+FINAL_SUMMARY.txt
+FINAL_VERIFICATION.txt
+IMPROVEMENTS_COMPLETE.txt
+RECOMMENDED_IMPROVEMENTS.txt
+RUNNING_STATUS.txt
+SETUP_COMPLETE.txt
+START_V2.txt
+V2_IMPLEMENTATION_COMPLETE.txt
+VERIFICATION_COMPLETE.txt
+VERSION_CONTROL.txt

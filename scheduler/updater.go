@@ -114,7 +114,7 @@ func applyUpgrade(discord *DiscordNotifier, ownerID string, mu *sync.RWMutex, st
 	}
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel2()
-	buildCmd := exec.CommandContext(ctx2, goBinary, "build", "-o", "../go-trader", ".")
+	buildCmd := exec.CommandContext(ctx2, goBinary, "build", "-o", "../tradr-bot", ".")
 	buildCmd.Dir = "scheduler"
 	buildOut, buildErr := buildCmd.CombinedOutput()
 	if buildErr != nil {
@@ -144,7 +144,7 @@ func restartSelf() error {
 	// Try systemctl first (Linux/systemd deployments).
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := exec.CommandContext(ctx, "systemctl", "restart", "go-trader").Run(); err == nil {
+	if err := exec.CommandContext(ctx, "systemctl", "restart", "tradr-bot").Run(); err == nil {
 		// systemd will SIGTERM this process; give it time to do so.
 		time.Sleep(30 * time.Second)
 	}
@@ -214,7 +214,7 @@ func formatUpdateMessage(localHash, remoteHash, commitLog, newTag string, goChan
 	if newTag != "" {
 		sb.WriteString(fmt.Sprintf("**New Release: %s**\n", newTag))
 	} else {
-		sb.WriteString("**go-trader Update Available**\n")
+		sb.WriteString("**Tradr Update Available**\n")
 	}
 
 	sb.WriteString(fmt.Sprintf("`%s` → `%s`\n", localHash[:8], remoteHash[:8]))
@@ -232,11 +232,11 @@ func formatUpdateMessage(localHash, remoteHash, commitLog, newTag string, goChan
 	}
 
 	sb.WriteString("To update:\n```\n")
-	sb.WriteString("cd /path/to/go-trader && git pull --ff-only\n")
+	sb.WriteString("cd /path/to/tradr && git pull --ff-only\n")
 	if goChanged {
-		sb.WriteString("cd scheduler && go build -o ../go-trader . && cd ..\n")
+		sb.WriteString("cd scheduler && go build -o ../tradr-bot . && cd ..\n")
 	}
-	sb.WriteString("systemctl restart go-trader\n```")
+	sb.WriteString("systemctl restart tradr-bot\n```")
 
 	return sb.String()
 }

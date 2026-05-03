@@ -495,7 +495,7 @@ func runInit(args []string) int {
 	p := NewPrompter()
 
 	fmt.Println()
-	fmt.Println("=== go-trader init ===")
+	fmt.Println("=== tradr-bot init ===")
 	fmt.Println("Interactive config setup. Press Enter to accept defaults.")
 	fmt.Println()
 
@@ -788,6 +788,6 @@ func runInit(args []string) int {
 	if discordEnabled {
 		fmt.Println("  export DISCORD_BOT_TOKEN=<your-token>")
 	}
-	fmt.Printf("  ./go-trader --config %s --once\n", outputPath)
+	fmt.Printf("  ./tradr-bot --config %s --once\n", outputPath)
 	return 0
 }

@@ -1,15 +1,15 @@
 [Unit]
-Description=Go Trading Bot (Spot + Options)
+Description=Tradr Trading Bot (Spot + Options)
 After=network.target
 
 [Service]
 Type=simple
 # Run as a dedicated non-root user.
-# Create before deploying: useradd --system --no-create-home go-trader
-User=go-trader
-Group=go-trader
-WorkingDirectory=/opt/go-trader
-ExecStart=/opt/go-trader/go-trader
+# Create before deploying: useradd --system --no-create-home tradr-bot
+User=tradr-bot
+Group=tradr-bot
+WorkingDirectory=/opt/tradr-bot
+ExecStart=/opt/tradr-bot/tradr-bot
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -17,16 +17,16 @@ StandardError=journal
 
 # Prefer loading the Discord token from an env file rather than embedding
 # it in the unit file or config.json:
-#   echo "DISCORD_BOT_TOKEN=Bot your-token-here" > /opt/go-trader/.env
-#   chmod 600 /opt/go-trader/.env
-EnvironmentFile=-/opt/go-trader/.env
+#   echo "DISCORD_BOT_TOKEN=Bot your-token-here" > /opt/tradr-bot/.env
+#   chmod 600 /opt/tradr-bot/.env
+EnvironmentFile=-/opt/tradr-bot/.env
 
 # Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 # Allow writes only to the data directory
-ReadWritePaths=/opt/go-trader/scheduler
+ReadWritePaths=/opt/tradr-bot/scheduler
 
 [Install]
 WantedBy=multi-user.target

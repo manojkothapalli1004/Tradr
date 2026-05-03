@@ -1,4 +1,4 @@
-# go-trader Project Context
+# Tradr Project Context
 
 ## Environment
 - Requires Go 1.26.0 — install via Homebrew: `brew install go@1.26`
@@ -15,7 +15,7 @@
   - `executor.go` — Python subprocess runner; max 4 concurrent, 30s timeout per script
   - `server.go` — HTTP status server (`/status`, `/health` endpoints)
   - `discord.go` — `discordgo.Session` wrapper for two-way Discord communication; `NewDiscordNotifier(token, ownerID string) (*DiscordNotifier, error)` — opens WebSocket gateway; `SendMessage(channelID, content)` — channel posts; `SendDM(userID, content)` — DM send; `AskDM(userID, question, timeout)` — send + block on reply (returns `ErrDMTimeout`); intents: `discordgo.IntentsDirectMessages`; DM detection: `m.GuildID == ""`; `FormatCategorySummary(..., channelKey, asset string)` — `asset` non-empty adds " — BTC" suffix + filters prices line; `extractAsset(sc)` uses `Args[1]` as canonical asset source (strips `/USDT` for spot); `groupByAsset(strats)` groups by asset with BTC/ETH/SOL/BNB-first sort; `channelTradeDetails` keyed as `ch+"|"+asset`; `fmtComma` — always pass absolute values
-  - `init.go` — `go-trader init` interactive wizard + `--json <blob>` non-interactive mode; `generateConfig(InitOptions) *Config` is pure/testable; `runInitFromJSON(jsonStr, outputPath)` for scripted config gen (e.g. from OpenClaw); `runInit` orchestrates I/O
+  - `init.go` — `tradr-bot init` interactive wizard + `--json <blob>` non-interactive mode; `generateConfig(InitOptions) *Config` is pure/testable; `runInitFromJSON(jsonStr, outputPath)` for scripted config gen (e.g. from OpenClaw); `runInit` orchestrates I/O
   - `prompt.go` — `Prompter` struct (String/YesNo/Choice/MultiSelect/Float); inject `NewPrompterFromReader(r,w)` for tests
   - `updater.go` — update checker; `checkForUpdates(cfg, discord, &lastNotifiedHash, &mu, state)` — git fetch, channel notify + DM upgrade prompt (goroutine); `applyUpgrade(discord, ownerID, mu, state, cfg)` — git pull + go build + state save + restart; `restartSelf()` — systemctl → syscall.Exec fallback; logs `[update]` prefix
   - `correlation.go` — `ComputeCorrelation(strategies, cfgStrategies, prices, corrCfg)` — per-asset directional exposure (delta-USD) across all strategies; `CorrelationSnapshot` with `AssetExposure` per asset; warns on concentration and same-direction thresholds; `findSpotPrice(asset, prices)` resolves asset to price
@@ -63,12 +63,12 @@
 - Strategy discovery: `shared_strategies/spot/strategies.py --list-json`, `shared_strategies/options/strategies.py --list-json`, and `shared_strategies/futures/strategies.py --list-json` output JSON arrays of `{"id":..., "description":...}`
 
 ## Build & Deploy
-- Build: `cd scheduler && /opt/homebrew/bin/go build -o ../go-trader .`
-- Restart: `systemctl restart go-trader`
+- Build: `cd scheduler && /opt/homebrew/bin/go build -o ../tradr-bot .`
+- Restart: `systemctl restart tradr-bot`
 - Only needed when `scheduler/*.go` files change
 - Python script changes take effect on next scheduler cycle (no rebuild needed)
-- Config changes: `systemctl restart go-trader` (no rebuild)
-- Service file changes: `systemctl daemon-reload && systemctl restart go-trader`
+- Config changes: `systemctl restart tradr-bot` (no rebuild)
+- Service file changes: `systemctl daemon-reload && systemctl restart tradr-bot`
 
 ## Backtest
 - `run_backtest.py`: `PYTHONPATH=core:strategies .venv/bin/python3 backtest/run_backtest.py --strategy <n> --symbol BTC/USDT --timeframe 1h --mode single`
@@ -84,7 +84,7 @@
 - `cd scheduler && /opt/homebrew/bin/go test ./...` — run all unit tests (must run from scheduler/ where go.mod lives; repo root has no go.mod)
 - `cd scheduler && /opt/homebrew/bin/gofmt -w <file>.go` — format after editing Go files (`-l *.go` lists all files needing formatting)
 - Multi-line Go edits with tabs: Edit tool may fail on tab-indented blocks; use heredoc form (one-liner fails on multi-line strings with quotes): `python3 << 'PYEOF'` / `content=open(f).read()` / `open(f,'w').write(content.replace(old,new,1))` / `PYEOF`
-- Smoke test: `./go-trader --once`
-- Run with config: `./go-trader --config scheduler/config.json`
-- Smoke test interactive CLI: `printf "answer1\nanswer2\n" | ./go-trader init`
-- Smoke test JSON CLI: `./go-trader init --json '{"assets":["BTC"],"enableSpot":true,"spotStrategies":["sma_crossover"],"spotCapital":1000,"spotDrawdown":10}' --output /tmp/test.json`
+- Smoke test: `./tradr-bot --once`
+- Run with config: `./tradr-bot --config scheduler/config.json`
+- Smoke test interactive CLI: `printf "answer1\nanswer2\n" | ./tradr-bot init`
+- Smoke test JSON CLI: `./tradr-bot init --json '{"assets":["BTC"],"enableSpot":true,"spotStrategies":["sma_crossover"],"spotCapital":1000,"spotDrawdown":10}' --output /tmp/test.json`

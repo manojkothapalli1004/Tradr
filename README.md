@@ -1,6 +1,8 @@
-# go-trader — Crypto Trading Bot
+# Tradr — Crypto Trading Bot
 
-[![GitHub release](https://img.shields.io/github/v/release/richkuo/go-trader)](https://github.com/richkuo/go-trader/releases/latest)
+> Built on [richkuo/go-trader](https://github.com/richkuo/go-trader) (MIT).
+
+[![GitHub release](https://img.shields.io/github/v/release/manojkothapalli1004/tradr)](https://github.com/manojkothapalli1004/tradr/releases/latest)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/44BykmWZsP)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -30,18 +32,18 @@ Join the Discord: [https://discord.gg/46d7Fa2dXz](https://discord.gg/46d7Fa2dXz)
 
 The fastest way to get running. Give your AI agent the [Agent Setup Guide](SKILL.md) — it's fully self-contained with the repo URL, step-by-step instructions, and exact prompts. The agent will clone the repo, install dependencies, walk you through configuration (Discord channels, strategy selection, risk settings), build the binary, and start the service.
 
-**Raw link for agents:** `https://raw.githubusercontent.com/richkuo/go-trader/main/SKILL.md`
+**Raw link for agents:** `https://raw.githubusercontent.com/manojkothapalli1004/tradr/main/SKILL.md`
 
 Using [OpenClaw](https://openclaw.ai)? Just say:
 
-> "Set up go-trader"
+> "Set up Tradr"
 
-### Interactive Setup (go-trader init)
+### Interactive Setup (tradr-bot init)
 
 After building the binary, run the interactive config wizard — the easiest way to generate a config without manual JSON editing:
 
 ```bash
-./go-trader init
+./tradr-bot init
 ```
 
 The wizard walks you through asset selection, strategy types (spot/options/perps), platform selection, capital and risk settings, and Discord configuration, then writes a ready-to-use `scheduler/config.json`.
@@ -49,39 +51,39 @@ The wizard walks you through asset selection, strategy types (spot/options/perps
 For scripted/automated deployments (e.g. from OpenClaw or CI), use `--json` to generate a config non-interactively:
 
 ```bash
-./go-trader init --json '{"assets":["BTC"],"enableSpot":true,"spotStrategies":["sma_crossover"],"spotCapital":1000,"spotDrawdown":10}' --output config.json
+./tradr-bot init --json '{"assets":["BTC"],"enableSpot":true,"spotStrategies":["sma_crossover"],"spotCapital":1000,"spotDrawdown":10}' --output config.json
 ```
 
 ### Manual Setup
 
 ```bash
 # 1. Clone
-git clone https://github.com/richkuo/go-trader.git
-cd go-trader
+git clone https://github.com/manojkothapalli1004/tradr.git
+cd tradr
 
 # 2. Install Python dependencies
 curl -LsSf https://astral.sh/uv/install.sh | sh   # install uv if needed
 uv sync                                             # creates .venv from lockfile
 
 # 3. Build (requires Go 1.26.0)
-cd scheduler && go build -o ../go-trader . && cd ..
+cd scheduler && go build -o ../tradr-bot . && cd ..
 
 # 4. Generate config
-./go-trader init                                    # interactive wizard (recommended)
+./tradr-bot init                                    # interactive wizard (recommended)
 # — or —
-./go-trader init --json '{"assets":["BTC"],...}'   # non-interactive (scripted)
+./tradr-bot init --json '{"assets":["BTC"],...}'   # non-interactive (scripted)
 # — or —
 cp scheduler/config.example.json scheduler/config.json
 # then edit scheduler/config.json manually
 
 # 5. Test one cycle
-./go-trader --config scheduler/config.json --once
+./tradr-bot --config scheduler/config.json --once
 
 # 6. Run as service
 export DISCORD_BOT_TOKEN="your-token"
-sudo cp go-trader.service /etc/systemd/system/
+sudo cp tradr-bot.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now go-trader
+sudo systemctl enable --now tradr-bot
 
 # 7. Verify
 curl -s localhost:8099/status | python3 -m json.tool
@@ -150,7 +152,7 @@ New options trades are scored against existing positions for strike distance, ex
 
 ### Perps (10 strategies, 1h interval, any HL-listed asset)
 
-Full spot strategy suite on Hyperliquid perpetual futures. Strategies are auto-discovered at `go-trader init` time: `momentum`, `sma_crossover`, `ema_crossover`, `rsi`, `bollinger_bands`, `macd`, `mean_reversion`, `volume_weighted`, `triple_ema`, `rsi_macd_combo`.
+Full spot strategy suite on Hyperliquid perpetual futures. Strategies are auto-discovered at `tradr-bot init` time: `momentum`, `sma_crossover`, `ema_crossover`, `rsi`, `bollinger_bands`, `macd`, `mean_reversion`, `volume_weighted`, `triple_ema`, `rsi_macd_combo`.
 
 Live mode requires `HYPERLIQUID_SECRET_KEY` env var. Paper mode simulates trades without a key.
 
@@ -184,7 +186,7 @@ CME futures on TopStep. Live mode requires `TOPSTEP_API_KEY`, `TOPSTEP_API_SECRE
 
 ### `scheduler/config.json`
 
-Use `./go-trader init` (interactive) or `./go-trader init --json '...'` (scripted) to generate this file. The full structure:
+Use `./tradr-bot init` (interactive) or `./tradr-bot init --json '...'` (scripted) to generate this file. The full structure:
 
 ```json
 {
@@ -275,7 +277,7 @@ To get your Discord user ID: right-click your username in Discord → **Copy Use
 | `discord.token` | Leave blank — use `DISCORD_BOT_TOKEN` env var |
 | `discord.owner_id` | Your Discord user ID — enables DM upgrade prompts and post-upgrade config migration. Use `DISCORD_OWNER_ID` env var. |
 | `discord.channels` | Map of channel IDs keyed by platform/type — `"spot"`, `"options"`, `"hyperliquid"`, `"topstep"`, etc. Options post per-check; others post hourly + on trades. |
-| `config_version` | Schema version (set automatically by `go-trader init`; migration runs on startup when behind current version) |
+| `config_version` | Schema version (set automatically by `tradr-bot init`; migration runs on startup when behind current version) |
 
 ### Strategy Entry
 
@@ -318,20 +320,20 @@ Closes sold options early based on profit target, stop loss, or approaching expi
 
 | Change | Action |
 |--------|--------|
-| Go code (`scheduler/*.go`) | `cd scheduler && go build -o ../go-trader . && systemctl restart go-trader` |
-| Python scripts | `systemctl restart go-trader` (or wait for next cycle) |
-| Config changes | `systemctl restart go-trader` |
-| Service file changes | `systemctl daemon-reload && systemctl restart go-trader` |
+| Go code (`scheduler/*.go`) | `cd scheduler && go build -o ../tradr-bot . && systemctl restart tradr-bot` |
+| Python scripts | `systemctl restart tradr-bot` (or wait for next cycle) |
+| Config changes | `systemctl restart tradr-bot` |
+| Service file changes | `systemctl daemon-reload && systemctl restart tradr-bot` |
 
 ---
 
 ## Monitoring
 
 ```bash
-systemctl status go-trader              # service health
+systemctl status tradr-bot              # service health
 curl -s localhost:8099/status            # live prices + P&L
 curl -s localhost:8099/health            # simple health check
-journalctl -u go-trader -n 50           # recent logs
+journalctl -u tradr-bot -n 50           # recent logs
 ```
 
 ---
@@ -364,7 +366,7 @@ journalctl -u go-trader -n 50           # recent logs
 ## File Structure
 
 ```
-go-trader/
+tradr/
 ├── scheduler/              # Go scheduler source + config
 │   ├── main.go             # Main loop, strategy orchestration
 │   ├── config.go           # Config parsing + validation
@@ -382,7 +384,7 @@ go-trader/
 │   ├── fees.go             # Trading fee calculations
 │   ├── pricer.go           # OptionPricer interface
 │   ├── ibkr_pricer.go      # IBKR Black-Scholes pricer
-│   ├── init.go             # go-trader init wizard
+│   ├── init.go             # tradr-bot init wizard
 │   ├── prompt.go           # Interactive prompt helpers
 │   ├── logger.go           # Logging
 │   ├── config.example.json # Config template
@@ -408,7 +410,7 @@ go-trader/
 ├── SKILL.md                # AI agent setup guide
 ├── CLAUDE.md               # AI agent project context
 ├── ISSUES.md               # Known issues tracker
-└── go-trader.service       # systemd unit file
+└── tradr-bot.service       # systemd unit file
 ```
 
 ---
@@ -426,9 +428,9 @@ go-trader/
 | Problem | Solution |
 |---------|----------|
 | No Discord messages | Check `DISCORD_BOT_TOKEN` env var, channel IDs, bot permissions |
-| Service won't start | `journalctl -u go-trader -n 50` |
+| Service won't start | `journalctl -u tradr-bot -n 50` |
 | Strategy not trading | Check circuit breaker in `/status`, verify params |
-| Reset positions | `cp scheduler/state.example.json scheduler/state.json && systemctl restart go-trader` |
+| Reset positions | `cp scheduler/state.example.json scheduler/state.json && systemctl restart tradr-bot` |
 | Hyperliquid live mode fails | Set `HYPERLIQUID_SECRET_KEY` env var; paper mode works without it |
 | TopStep live mode fails | Set `TOPSTEP_API_KEY`, `TOPSTEP_API_SECRET`, `TOPSTEP_ACCOUNT_ID` env vars |
 

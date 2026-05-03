@@ -1,10 +1,10 @@
-# Agent Setup Guide — go-trader
+# Agent Setup Guide — Tradr
 
-**Repository:** `https://github.com/richkuo/go-trader.git`
+**Repository:** `https://github.com/manojkothapalli1004/tradr.git`
 
 This is a self-contained setup guide for AI agents. Give this file to any AI coding agent and it will handle the full installation — cloning the repo, installing dependencies, configuring Discord/strategies/risk, building, and starting the service.
 
-**For OpenClaw agents:** This is the skill entry point. Read it when a user says "set up go-trader", "install go trading bot", or "configure go-trader".
+**For OpenClaw agents:** This is the skill entry point. Read it when a user says "set up Tradr", "install Tradr trading bot", or "configure Tradr".
 
 ---
 
@@ -52,31 +52,31 @@ git --version
 
 Check if already installed:
 ```bash
-test -d go-trader/scheduler && echo "EXISTS" || echo "FRESH"
+test -d tradr/scheduler && echo "EXISTS" || echo "FRESH"
 ```
 
 **If EXISTS**, ask:
-> go-trader is already installed. Do you want to:
+> Tradr is already installed. Do you want to:
 > 1. Reconfigure (keep code, redo setup)
 > 2. Update (pull latest + rebuild)
 > 3. Fresh install (delete and start over)
 
 **If FRESH**, clone from GitHub:
 ```bash
-git clone https://github.com/richkuo/go-trader.git
-cd go-trader
+git clone https://github.com/manojkothapalli1004/tradr.git
+cd tradr
 ```
 
 **If the clone fails** (private repo or auth issue), ask:
 > I couldn't clone the repository. Do you have a GitHub token or SSH key configured?
-> You can also download it manually: https://github.com/richkuo/go-trader
+> You can also download it manually: https://github.com/manojkothapalli1004/tradr
 
 ---
 
 ## Step 3: Install Python Dependencies
 
 ```bash
-cd go-trader
+cd tradr
 uv sync
 ```
 **Verify:** `.venv/bin/python3` should exist after this.
@@ -85,18 +85,18 @@ No user input needed for this step.
 
 ---
 
-## Step 3b: Quick Config via `go-trader init` (Recommended for Human Users)
+## Step 3b: Quick Config via `tradr-bot init` (Recommended for Human Users)
 
 Before proceeding with Steps 4–7 (manual config), build the binary first so the wizard is available:
 
 ```bash
-cd scheduler && /usr/local/go/bin/go build -o ../go-trader . && cd ..
+cd scheduler && /usr/local/go/bin/go build -o ../tradr-bot . && cd ..
 ```
 
 Then run the interactive wizard:
 
 ```bash
-./go-trader init
+./tradr-bot init
 ```
 
 The wizard walks through:
@@ -111,11 +111,11 @@ The wizard walks through:
 
 A summary is shown before writing. If `scheduler/config.json` already exists, you'll be prompted to confirm overwrite.
 
-After `go-trader init` completes, **skip to Step 8** (Build & Install). Steps 4–7 are only needed for manual or agent-driven config generation.
+After `tradr-bot init` completes, **skip to Step 8** (Build & Install). Steps 4–7 are only needed for manual or agent-driven config generation.
 
 > **Note for agents:** For scripted/automated config generation, use `--json` instead of Steps 4–7:
 > ```bash
-> ./go-trader init --json '{"assets":["BTC","ETH"],"enableSpot":true,"spotStrategies":["momentum","rsi"],"spotCapital":1000,"spotDrawdown":60}' --output scheduler/config.json
+> ./tradr-bot init --json '{"assets":["BTC","ETH"],"enableSpot":true,"spotStrategies":["momentum","rsi"],"spotCapital":1000,"spotDrawdown":60}' --output scheduler/config.json
 > ```
 > Steps 4–7 describe the manual procedure — use those only when you need fine-grained control (partial reconfiguration, custom strategy sets, etc.).
 
@@ -281,7 +281,7 @@ Ask:
 ## Step 6: Strategy Selection
 
 Ask:
-> go-trader comes with strategies across four groups:
+> Tradr comes with strategies across four groups:
 >
 > **Spot (10 strategies)** — BTC, ETH, SOL on Binance
 >   sma_crossover, ema_crossover, momentum, rsi, bollinger_bands, macd,
@@ -443,16 +443,16 @@ If no, ask which part they want to change and loop back to the relevant step.
 ### 8a. Build Go Binary
 ```bash
 cd scheduler
-/usr/local/go/bin/go build -o ../go-trader .
+/usr/local/go/bin/go build -o ../tradr-bot .
 cd ..
 ```
 If `go` is in PATH, just use `go build`. Check both.
 
-**Verify:** `./go-trader --help` should print usage.
+**Verify:** `./tradr-bot --help` should print usage.
 
 ### 8b. Test Run
 ```bash
-./go-trader --config scheduler/config.json --once
+./tradr-bot --config scheduler/config.json --once
 ```
 Check for errors. If Discord is configured, a summary should appear in the channels.
 
@@ -468,7 +468,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory={PROJECT_DIR}
-ExecStart={PROJECT_DIR}/go-trader --config scheduler/config.json
+ExecStart={PROJECT_DIR}/tradr-bot --config scheduler/config.json
 Environment="DISCORD_BOT_TOKEN={token}"
 Environment="DISCORD_OWNER_ID={owner_discord_user_id}"
 Restart=always
@@ -495,17 +495,17 @@ Environment="TOPSTEP_ACCOUNT_ID={account_id}"
 
 ```bash
 mkdir -p logs
-sudo cp go-trader.service /etc/systemd/system/
+sudo cp tradr-bot.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable go-trader
-sudo systemctl start go-trader
+sudo systemctl enable tradr-bot
+sudo systemctl start tradr-bot
 ```
 
 ### Step 8d: Auto-Update & DM Upgrades
 
-go-trader checks for updates via `git fetch` and notifies all active Discord channels. If `DISCORD_OWNER_ID` is set, it also **DMs the owner** offering to upgrade automatically.
+Tradr checks for updates via `git fetch` and notifies all active Discord channels. If `DISCORD_OWNER_ID` is set, it also **DMs the owner** offering to upgrade automatically.
 
-Configure during `go-trader init` (or set `auto_update` in `config.json`):
+Configure during `tradr-bot init` (or set `auto_update` in `config.json`):
 
 | Mode | Behavior |
 |------|----------|
@@ -525,14 +525,14 @@ The scheduler will not re-notify for the same remote version until a newer one a
 
 **Manual update (always works regardless of setting):**
 ```bash
-cd /path/to/go-trader && git pull --ff-only
-cd scheduler && /usr/local/go/bin/go build -o ../go-trader . && cd ..
-sudo systemctl restart go-trader
+cd /path/to/tradr && git pull --ff-only
+cd scheduler && /usr/local/go/bin/go build -o ../tradr-bot . && cd ..
+sudo systemctl restart tradr-bot
 ```
 
 **Verify the update check is working:**
 ```bash
-journalctl -u go-trader -f | grep -i "\[update\]"
+journalctl -u tradr-bot -f | grep -i "\[update\]"
 ```
 
 ---
@@ -542,7 +542,7 @@ journalctl -u go-trader -f | grep -i "\[update\]"
 ### 9a. Initial Prompt
 
 Ask:
-> Would you like to add a custom trading platform integration? This lets you connect go-trader to an exchange not included by default (spot, perps, or options).
+> Would you like to add a custom trading platform integration? This lets you connect Tradr to an exchange not included by default (spot, perps, or options).
 >
 > (yes / no)
 
@@ -699,7 +699,7 @@ cd scheduler && /usr/local/go/bin/go build .
 
 3. Smoke test:
 ```bash
-./go-trader --config scheduler/config.json --once
+./tradr-bot --config scheduler/config.json --once
 ```
 Check that the new platform's strategies appear in the output without errors.
 
@@ -709,7 +709,7 @@ Check that the new platform's strategies appear in the output without errors.
 
 ### 10a. Service Running
 ```bash
-systemctl is-active go-trader
+systemctl is-active tradr-bot
 ```
 Expected: `active`
 
@@ -730,22 +730,22 @@ If Discord is enabled, wait for the first cycle to complete (~5 minutes) and ver
 
 ### 10d. Report to User
 
-> ✅ **go-trader is running!**
+> ✅ **Tradr is running!**
 >
 > **Mode:** {paper/live}
 > **Strategies:** {N} active
 > **Status:** `curl localhost:8099/status`
-> **Logs:** `journalctl -u go-trader -f`
+> **Logs:** `journalctl -u tradr-bot -f`
 >
 > Spot strategies check every 5 minutes (summaries {freq}).
 > Options strategies check every 20 minutes (summaries per check).
 > Trades post immediately to Discord.
 >
 > **Useful commands:**
-> - Stop: `sudo systemctl stop go-trader`
-> - Restart: `sudo systemctl restart go-trader`
+> - Stop: `sudo systemctl stop tradr-bot`
+> - Restart: `sudo systemctl restart tradr-bot`
 > - Status: `curl -s localhost:8099/status | python3 -m json.tool`
-> - Reset positions: `cp scheduler/state.example.json scheduler/state.json && sudo systemctl restart go-trader`
+> - Reset positions: `cp scheduler/state.example.json scheduler/state.json && sudo systemctl restart tradr-bot`
 
 ---
 
@@ -818,29 +818,29 @@ These can be done after initial setup without re-running the full guide.
 Run the interactive wizard to produce a fresh `config.json` (will prompt before overwriting):
 
 ```bash
-./go-trader init
+./tradr-bot init
 ```
 
 Or non-interactively (for agents or scripted setups):
 
 ```bash
-./go-trader init --json '{"assets":["BTC"],"enableSpot":true,"spotStrategies":["momentum"],"spotCapital":1000,"spotDrawdown":60}' --output scheduler/config.json
+./tradr-bot init --json '{"assets":["BTC"],"enableSpot":true,"spotStrategies":["momentum"],"spotCapital":1000,"spotDrawdown":60}' --output scheduler/config.json
 ```
 
-Then restart: `sudo systemctl restart go-trader`
+Then restart: `sudo systemctl restart tradr-bot`
 
 ### Change Discord Channels
 Edit `scheduler/config.json` → `discord.channels` (map keyed by platform/type), then restart:
 ```bash
-sudo systemctl restart go-trader
+sudo systemctl restart tradr-bot
 ```
 If new channels, also add to OpenClaw allowlist.
 
 ### Change Discord Token
 ```bash
-sudo systemctl edit go-trader
+sudo systemctl edit tradr-bot
 # Add: Environment="DISCORD_BOT_TOKEN=new_token_here"
-sudo systemctl restart go-trader
+sudo systemctl restart tradr-bot
 ```
 
 ### Add/Remove Strategies
@@ -856,7 +856,7 @@ Add or remove the `theta_harvest` block from individual strategy entries in conf
 
 Edit `auto_update` in `scheduler/config.json` (`"off"`, `"daily"`, or `"heartbeat"`), then restart:
 ```bash
-sudo systemctl restart go-trader
+sudo systemctl restart tradr-bot
 ```
 
 ### Add Custom Platform Integration
@@ -865,18 +865,18 @@ To add a new exchange (spot, perps, or options), follow the guided flow in Step 
 ### Switch Paper → Live
 Add exchange API keys to systemd environment:
 ```bash
-sudo systemctl edit go-trader
+sudo systemctl edit tradr-bot
 # [Service]
 # Environment="BINANCE_API_KEY=..."
 # Environment="BINANCE_API_SECRET=..."
-sudo systemctl restart go-trader
+sudo systemctl restart tradr-bot
 ```
 
 ---
 
-## `/go-trader` Command
+## `/tradr-bot` Command
 
-When the user says `/go-trader`, "check bot status", "show strategy health", or "how are the bots doing", run this:
+When the user says `/tradr-bot`, "check bot status", "show strategy health", or "how are the bots doing", run this:
 
 ```bash
 curl -s localhost:8099/status | python3 -c "
@@ -955,7 +955,7 @@ When the user says `/menu`, "show menu", "what can I configure", "what's availab
    Futures (5 strategies, TopStep/CME):
      momentum, mean_reversion, rsi, macd, breakout
 
-3. ADJUSTABLE SETTINGS  (edit scheduler/config.json, then: sudo systemctl restart go-trader)
+3. ADJUSTABLE SETTINGS  (edit scheduler/config.json, then: sudo systemctl restart tradr-bot)
    Global:
      interval_seconds  — default cycle interval (seconds)
      state_file        — path to position/trade history file
@@ -971,22 +971,22 @@ When the user says `/menu`, "show menu", "what can I configure", "what's availab
      enabled           — true/false
      channels          — map: "spot", "options", "hyperliquid", "topstep"
      summary_interval  — how often to post summaries
-   Environment (sudo systemctl edit go-trader):
+   Environment (sudo systemctl edit tradr-bot):
      DISCORD_BOT_TOKEN, STATUS_AUTH_TOKEN
      BINANCE_API_KEY, BINANCE_API_SECRET
      TOPSTEP_API_KEY, TOPSTEP_API_SECRET, TOPSTEP_ACCOUNT_ID
 
 4. COMMANDS
    /menu       — this overview
-   /go-trader  — live status dashboard (cycle, prices, PnL, circuit breakers)
+   /tradr-bot  — live status dashboard (cycle, prices, PnL, circuit breakers)
    Setup:
-     ./go-trader init                    — interactive config wizard (regenerate config.json)
-     ./go-trader init --json '{...}'     — non-interactive config generation (agents/scripts)
+     ./tradr-bot init                    — interactive config wizard (regenerate config.json)
+     ./tradr-bot init --json '{...}'     — non-interactive config generation (agents/scripts)
      Add custom platform                 — say "add a custom platform" (runs Step 9 guided flow)
    System:
-     sudo systemctl start|stop|restart go-trader
-     sudo systemctl status go-trader
-     journalctl -u go-trader -n 50 --no-pager
+     sudo systemctl start|stop|restart tradr-bot
+     sudo systemctl status tradr-bot
+     journalctl -u tradr-bot -n 50 --no-pager
      curl -s localhost:8099/status | python3 -m json.tool
 
 5. BACKTESTING
@@ -1007,7 +1007,7 @@ For full details on any section, ask about it or see the relevant section in SKI
 
 All settings live in `scheduler/config.json`. After any change, restart the service:
 ```bash
-sudo systemctl restart go-trader
+sudo systemctl restart tradr-bot
 ```
 
 Config changes are synced to state on startup — no need to reset positions.
@@ -1054,7 +1054,7 @@ Each entry in the `strategies` array supports:
 
 ### Environment Variables
 
-Set via systemd override (`sudo systemctl edit go-trader`):
+Set via systemd override (`sudo systemctl edit tradr-bot`):
 
 | Variable | Description |
 |----------|-------------|
@@ -1089,7 +1089,7 @@ To change deribit-vol-btc to $2,000 capital with 50% max drawdown and theta harv
 }
 ```
 
-Then restart: `sudo systemctl restart go-trader`
+Then restart: `sudo systemctl restart tradr-bot`
 
 **Note:** Changing `capital` on an existing strategy does NOT reset its positions or cash. It only changes the `initial_capital` reference for PnL calculations. To fully reset a strategy, delete it from `scheduler/state.json` and restart.
 

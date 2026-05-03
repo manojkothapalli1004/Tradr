@@ -1,11 +1,17 @@
 [project]
-name = "go-trader"
+name = "tradr"
 version = "0.1.0"
-description = "Crypto trading bot — backtesting, paper trading, live trading with risk management"
+description = "Tradr — crypto trading bot with backtesting, paper trading, live trading, and risk management"
 requires-python = ">=3.12"
 dependencies = [
     "ccxt>=4.5.37",
     "hyperliquid-python-sdk>=0.4.0",
     "numpy>=2.4.2",
     "pandas>=3.0.0",
+    "yfinance>=0.2.50",    # options_bot: equity ETF data (15-min delayed, paper only)
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
 ]

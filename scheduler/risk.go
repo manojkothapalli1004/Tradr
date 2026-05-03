@@ -154,38 +154,57 @@ func rolloverDailyPnL(r *RiskState) {
 
 // forceCloseAllPositions liquidates all open positions at current prices.
 // Called when any circuit breaker fires.
+// Uses gap-aware fill prices: when a circuit breaker fires, the market has
+// moved against you — fills are worse than the current mid price, simulating
+// the slippage of a panicked liquidation.
 func forceCloseAllPositions(s *StrategyState, prices map[string]float64, logger *StrategyLogger) {
 	now := time.Now().UTC()
+	slipCfg := DefaultSlippageConfig()
+	// Force-close slippage is 2× base to model distressed liquidation
+	slipCfg.BaseBps *= 2
 
 	for symbol, pos := range s.Positions {
 		price, ok := prices[symbol]
 		if !ok {
 			price = pos.AvgCost
 		}
+		// Determine exit side and compute adverse fill
+		var exitSide string
+		if pos.Side == "long" {
+			exitSide = "sell"
+		} else {
+			exitSide = "buy"
+		}
+		notional := pos.Quantity * price
+		if pos.Multiplier > 0 {
+			notional = pos.Quantity * pos.Multiplier * price
+		}
+		ctx := SlippageContext{Price: price, OrderUSD: notional}
+		fillPrice := FillPrice(exitSide, ctx, slipCfg)
+
 		var pnl, value float64
 		tradeType := "spot"
 		if pos.Multiplier > 0 {
-			// Futures: PnL-based (contracts * multiplier * price delta)
 			tradeType = "futures"
 			if pos.Side == "long" {
-				pnl = pos.Quantity * pos.Multiplier * (price - pos.AvgCost)
+				pnl = pos.Quantity * pos.Multiplier * (fillPrice - pos.AvgCost)
 			} else {
-				pnl = pos.Quantity * pos.Multiplier * (pos.AvgCost - price)
+				pnl = pos.Quantity * pos.Multiplier * (pos.AvgCost - fillPrice)
 			}
 			s.Cash += pnl
-			value = pos.Quantity * pos.Multiplier * price
+			value = pos.Quantity * pos.Multiplier * fillPrice
 		} else if pos.Side == "long" {
-			proceeds := pos.Quantity * price
+			proceeds := pos.Quantity * fillPrice
 			pnl = proceeds - pos.Quantity*pos.AvgCost
 			s.Cash += proceeds
 			value = proceeds
 		} else {
-			pnl = pos.Quantity * (pos.AvgCost - price)
-			s.Cash += pos.Quantity*pos.AvgCost - pos.Quantity*price
-			value = pos.Quantity * price
+			pnl = pos.Quantity * (pos.AvgCost - fillPrice)
+			s.Cash += pos.Quantity*pos.AvgCost - pos.Quantity*fillPrice
+			value = pos.Quantity * fillPrice
 		}
 		if logger != nil {
-			logger.Warn("Circuit breaker: force-closing %s %s @ $%.2f (PnL: $%.2f)", pos.Side, symbol, price, pnl)
+			logger.Warn("Circuit breaker: force-closing %s %s @ $%.2f (mid=$%.2f, PnL: $%.2f)", pos.Side, symbol, fillPrice, price, pnl)
 		}
 		trade := Trade{
 			Timestamp:  now,
@@ -193,10 +212,10 @@ func forceCloseAllPositions(s *StrategyState, prices map[string]float64, logger 
 			Symbol:     symbol,
 			Side:       "close",
 			Quantity:   pos.Quantity,
-			Price:      price,
+			Price:      fillPrice,
 			Value:      value,
 			TradeType:  tradeType,
-			Details:    fmt.Sprintf("Circuit breaker force-close, PnL: $%.2f", pnl),
+			Details:    fmt.Sprintf("Circuit breaker force-close @ $%.2f (mid=$%.2f), PnL: $%.2f", fillPrice, price, pnl),
 		}
 		s.TradeHistory = append(s.TradeHistory, trade)
 		RecordTradeResult(&s.RiskState, pnl)

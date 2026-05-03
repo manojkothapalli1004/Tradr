@@ -870,6 +870,85 @@ class DeribitOptionsAdapter:
             return group
         return None
 
+    def open_iron_condor(self, underlying: str, dte_target: float = 14,
+                         short_otm_pct: float = 0.12, wing_width_pct: float = 0.05,
+                         quantity: float = 1.0) -> Optional[str]:
+        """Open iron condor: sell OTM strangle + buy further OTM wings."""
+        spot = self.get_spot_price(underlying)
+        if spot <= 0:
+            return None
+
+        dte_min, dte_max = dte_target - 7, dte_target + 7
+        calls = self.find_options(underlying, OptionType.CALL,
+                                   min_dte=dte_min, max_dte=dte_max,
+                                   moneyness="OTM", max_results=20)
+        puts = self.find_options(underlying, OptionType.PUT,
+                                  min_dte=dte_min, max_dte=dte_max,
+                                  moneyness="OTM", max_results=20)
+        if not calls or not puts:
+            return None
+
+        # Short legs: ~short_otm_pct OTM
+        short_call = min(calls, key=lambda c: abs(c.strike - spot * (1 + short_otm_pct)))
+        short_put = min(puts, key=lambda c: abs(c.strike - spot * (1 - short_otm_pct)))
+
+        # Long wings: further out by wing_width_pct
+        long_call_target = spot * (1 + short_otm_pct + wing_width_pct)
+        long_put_target = spot * (1 - short_otm_pct - wing_width_pct)
+        long_call = min(calls, key=lambda c: abs(c.strike - long_call_target))
+        long_put = min(puts, key=lambda c: abs(c.strike - long_put_target))
+
+        group = f"iron_condor_{self._order_counter + 1}"
+        legs = [
+            self.sell_option(short_call, quantity, leg_group=group),
+            self.sell_option(short_put, quantity, leg_group=group),
+            self.buy_option(long_call, quantity, leg_group=group),
+            self.buy_option(long_put, quantity, leg_group=group),
+        ]
+        if all(legs):
+            return group
+        return None
+
+    def open_iron_butterfly(self, underlying: str, dte_target: float = 14,
+                            wing_width_pct: float = 0.05,
+                            quantity: float = 1.0) -> Optional[str]:
+        """Open iron butterfly: sell ATM straddle + buy OTM wings."""
+        spot = self.get_spot_price(underlying)
+        if spot <= 0:
+            return None
+
+        dte_min, dte_max = dte_target - 7, dte_target + 7
+        atm_calls = self.find_options(underlying, OptionType.CALL,
+                                       min_dte=dte_min, max_dte=dte_max,
+                                       moneyness="ATM", max_results=3)
+        atm_puts = self.find_options(underlying, OptionType.PUT,
+                                      min_dte=dte_min, max_dte=dte_max,
+                                      moneyness="ATM", max_results=3)
+        otm_calls = self.find_options(underlying, OptionType.CALL,
+                                       min_dte=dte_min, max_dte=dte_max,
+                                       moneyness="OTM", max_results=10)
+        otm_puts = self.find_options(underlying, OptionType.PUT,
+                                      min_dte=dte_min, max_dte=dte_max,
+                                      moneyness="OTM", max_results=10)
+        if not atm_calls or not atm_puts or not otm_calls or not otm_puts:
+            return None
+
+        short_call = atm_calls[0]
+        short_put = atm_puts[0]
+        long_call = min(otm_calls, key=lambda c: abs(c.strike - spot * (1 + wing_width_pct)))
+        long_put = min(otm_puts, key=lambda c: abs(c.strike - spot * (1 - wing_width_pct)))
+
+        group = f"iron_butterfly_{self._order_counter + 1}"
+        legs = [
+            self.sell_option(short_call, quantity, leg_group=group),
+            self.sell_option(short_put, quantity, leg_group=group),
+            self.buy_option(long_call, quantity, leg_group=group),
+            self.buy_option(long_put, quantity, leg_group=group),
+        ]
+        if all(legs):
+            return group
+        return None
+
     # ─────────────────────────────────────────
     # Portfolio
     # ─────────────────────────────────────────

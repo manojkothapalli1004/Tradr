@@ -124,7 +124,7 @@ func runConfigMigrationDM(cfg *Config, discord *DiscordNotifier, configPath stri
 		return
 	}
 
-	intro := fmt.Sprintf("**go-trader upgraded!** %d new config field(s) to set.", len(fields))
+	intro := fmt.Sprintf("**Tradr upgraded!** %d new config field(s) to set.", len(fields))
 	if err := discord.SendDM(cfg.Discord.OwnerID, intro); err != nil {
 		fmt.Printf("[migration] Failed to send intro DM: %v\n", err)
 		return

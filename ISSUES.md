@@ -1,4 +1,4 @@
-# go-trader Consolidated Issue Master List
+# Tradr Consolidated Issue Master List
 
 Cross-referenced original review (31 issues) with second audit (59 issues). Each issue categorized as **Bug**, **Security**, **Feature** (missing capability), or **Other** (code quality, process, strategy performance).
 
@@ -49,7 +49,7 @@ Cross-referenced original review (31 issues) with second audit (59 issues). Each
 | #   | Issue                                                                                                 | Source | Fixed? | Severity |
 | --- | ----------------------------------------------------------------------------------------------------- | ------ | ------ | -------- |
 | 31  | **Service runs as root** — No User= directive, Python scripts execute as root                         | [BOTH] | YES    | 4        |
-| 32  | **Compiled binary in repo** — 8.5MB go-trader binary was tracked in git                               | [ORIG] | YES    | 2        |
+| 32  | **Compiled binary in repo** — 8.5MB tradr-bot binary was tracked in git                               | [ORIG] | YES    | 2        |
 | 33  | **Discord token storage** — In config.json (gitignored) or env var. Env var preferred                 | [BOTH] | YES    | 3        |
 | 34  | **Script path not validated** — Strategy Script field passed directly to exec.Command                 | [ORIG] | YES    | 5        |
 | 35  | **Positions passed as CLI args** — Visible in /proc/[pid]/cmdline, could hit ARG_MAX                  | [ORIG] | YES    | 3        |

@@ -267,6 +267,171 @@ def pairs_spread_strategy(df: pd.DataFrame, lookback: int = 30, entry_z: float =
     return result
 
 
+@register_strategy(
+    "orb",
+    "Opening Range Breakout — buy/sell when price breaks prior N-bar range high/low (research candidate)",
+    {"orb_bars": 4, "confirm_bars": 1}
+)
+def orb_strategy(df: pd.DataFrame, orb_bars: int = 4, confirm_bars: int = 1) -> pd.DataFrame:
+    """
+    Pseudo-ORB on rolling bars. orb_bars defines the 'range' (e.g. 4 × 15m = 1h).
+    Buy when close breaks above the prior range high; sell when it breaks below the range low.
+    Labeled as research hypothesis — not a proven edge.
+    """
+    result = df.copy()
+    result["orb_high"] = result["high"].rolling(window=orb_bars).max().shift(confirm_bars)
+    result["orb_low"] = result["low"].rolling(window=orb_bars).min().shift(confirm_bars)
+    result["signal"] = 0
+    result.loc[
+        (result["close"] > result["orb_high"]) & (result["close"].shift(1) <= result["orb_high"].shift(1)),
+        "signal"
+    ] = 1
+    result.loc[
+        (result["close"] < result["orb_low"]) & (result["close"].shift(1) >= result["orb_low"].shift(1)),
+        "signal"
+    ] = -1
+    return result
+
+
+@register_strategy(
+    "vwap_trend",
+    "VWAP Trend — buy on VWAP reclaim, sell on VWAP rejection, RSI-filtered (research candidate)",
+    {"vwap_period": 20, "rsi_period": 14, "rsi_filter": 50}
+)
+def vwap_trend_strategy(df: pd.DataFrame, vwap_period: int = 20, rsi_period: int = 14, rsi_filter: float = 50) -> pd.DataFrame:
+    """
+    Rolling VWAP computed over vwap_period bars. Buy when price reclaims VWAP from below
+    with RSI > rsi_filter; sell when it rejects and crosses below with RSI < rsi_filter.
+    Labeled as research hypothesis — not a proven edge.
+    """
+    result = df.copy()
+    typical_price = (result["high"] + result["low"] + result["close"]) / 3
+    result["vwap"] = (
+        (typical_price * result["volume"]).rolling(window=vwap_period).sum()
+        / result["volume"].rolling(window=vwap_period).sum()
+    )
+    delta = result["close"].diff()
+    gain = delta.clip(lower=0)
+    loss = (-delta).clip(lower=0)
+    avg_gain = gain.ewm(alpha=1 / rsi_period, min_periods=rsi_period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / rsi_period, min_periods=rsi_period, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    result["rsi"] = 100 - (100 / (1 + rs))
+    result["signal"] = 0
+    reclaim = (result["close"] > result["vwap"]) & (result["close"].shift(1) <= result["vwap"].shift(1))
+    result.loc[reclaim & (result["rsi"] > rsi_filter), "signal"] = 1
+    reject = (result["close"] < result["vwap"]) & (result["close"].shift(1) >= result["vwap"].shift(1))
+    result.loc[reject & (result["rsi"] < rsi_filter), "signal"] = -1
+    return result
+
+
+@register_strategy(
+    "break_retest",
+    "Break-and-Retest — two-phase: breakout detection then retest of broken level (research candidate)",
+    {"lookback": 20, "retest_window": 8, "pullback_pct": 1.5, "ema_trend_period": 50}
+)
+def break_retest_strategy(df: pd.DataFrame,
+                          lookback: int = 20,
+                          retest_window: int = 8,
+                          pullback_pct: float = 1.5,
+                          ema_trend_period: int = 50) -> pd.DataFrame:
+    """
+    Two-phase break-and-retest state machine (vectorized across the full dataframe).
+
+    Phase 1 — Breakout:
+        Close crosses above the prior N-bar resistance high (or below support low)
+        for the first time. The broken level is recorded on that edge bar only
+        (not on every bar where price stays above the level).
+
+    Phase 2 — Retest:
+        Within the next retest_window bars (e.g. 8 × 15m = 2h), price pulls back
+        within pullback_pct% BELOW the broken resistance (which now acts as support).
+        For shorts, price pulls back within pullback_pct% ABOVE broken support.
+
+    Phase 3 — Confirmation (entry signal):
+        On the bar immediately AFTER a retest bar, price closes BACK ABOVE the
+        broken level AND above the trend EMA. Signal fires here.
+        Mirror for shorts: close back below broken support AND below EMA.
+
+    Minimum sequence: breakout bar → retest bar → confirmation bar (3 distinct bars).
+    The breakout bar cannot also be the retest bar (close > broken level on breakout,
+    close < broken level required for retest — mutually exclusive).
+
+    Parameters:
+        lookback        Rolling window for resistance/support level (bars).
+        retest_window   Max bars after breakout to expect a valid retest.
+        pullback_pct    How far (%) price can dip below the broken level and still
+                        count as a retest rather than a breakdown. 1.5% is
+                        reasonable for 15m BTC/ETH where single bars move 0.3–1%.
+        ema_trend_period EMA period for trend direction filter.
+
+    Labeled as research hypothesis — not a proven edge.
+    """
+    result = df.copy()
+
+    # Trend filter
+    result["ema_trend"] = ema(result["close"], ema_trend_period)
+
+    # Rolling resistance and support — shifted by 1 to avoid look-ahead
+    resist  = result["high"].rolling(window=lookback).max().shift(1)
+    support = result["low"].rolling(window=lookback).min().shift(1)
+
+    # ── Phase 1: Edge detection — first bar that crosses the level ────────────
+    # We only record the broken level on the very first crossing bar (edge),
+    # not on every bar where price stays above the level. This prevents the
+    # "breakout level" from updating as the rolling window advances.
+    above_resist  = result["close"] > resist
+    below_support = result["close"] < support
+
+    breakout_up_edge   = above_resist  & ~above_resist.shift(1, fill_value=False)
+    breakout_down_edge = below_support & ~below_support.shift(1, fill_value=False)
+
+    # Record the broken level at the edge bar; forward-fill for retest_window bars
+    # so subsequent bars know which level to watch for a retest.
+    broken_resist  = resist.where(breakout_up_edge).ffill(limit=retest_window)
+    broken_support = support.where(breakout_down_edge).ffill(limit=retest_window)
+
+    # ── Phase 2: Retest zone ──────────────────────────────────────────────────
+    # Long retest: price pulls back BELOW the broken resistance (now potential support)
+    # but not more than pullback_pct% below it. close < broken_resist is required
+    # (genuine pullback, not still above it), so this cannot fire on the breakout bar.
+    in_retest_long = (
+        broken_resist.notna()
+        & (result["close"] < broken_resist)
+        & (result["close"] >= broken_resist * (1 - pullback_pct / 100))
+    )
+
+    # Short retest: price pulls back ABOVE broken support but not more than pullback_pct% above.
+    in_retest_short = (
+        broken_support.notna()
+        & (result["close"] > broken_support)
+        & (result["close"] <= broken_support * (1 + pullback_pct / 100))
+    )
+
+    # ── Phase 3: Confirmation — fires on the bar after a retest ──────────────
+    # Long: previous bar was in retest zone; current bar closes back above the
+    # broken level (reclaimed) and above the trend EMA.
+    # We use .shift(1) on broken_resist to reference the level at the retest bar —
+    # still valid because it was within the ffill window at that point.
+    result["signal"] = 0
+
+    result.loc[
+        in_retest_long.shift(1, fill_value=False)
+        & (result["close"] > broken_resist.shift(1))
+        & (result["close"] > result["ema_trend"]),
+        "signal"
+    ] = 1
+
+    result.loc[
+        in_retest_short.shift(1, fill_value=False)
+        & (result["close"] < broken_support.shift(1))
+        & (result["close"] < result["ema_trend"]),
+        "signal"
+    ] = -1
+
+    return result
+
+
 if __name__ == "__main__":
     import sys
     import json

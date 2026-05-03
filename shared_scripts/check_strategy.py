@@ -17,9 +17,84 @@ import json
 import traceback
 from datetime import datetime, timezone
 
+import numpy as np
+import pandas as pd
+
 # Add parent dirs to path so we can import from strategies/ and core/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared_strategies', 'spot'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared_tools'))
+
+
+# ── Regime detection (ADX + ATR on 4h data) ─────────────────────────────────
+
+_ADX_PERIOD = 14
+_ATR_PERIOD = 14
+_ATR_AVG_BARS = 30
+_ADX_TREND_THRESHOLD = 25.0
+_ATR_VOLATILE_MULTIPLIER = 2.0
+
+
+def _detect_regime(symbol: str) -> str:
+    """
+    Classify market regime for *symbol* using 4h OHLCV data.
+
+    Returns one of: trend_up, trend_down, range, volatile, unknown.
+    Never raises — returns "unknown" on any failure.
+    """
+    try:
+        from data_fetcher import fetch_ohlcv
+
+        df = fetch_ohlcv(symbol=symbol, timeframe="4h", limit=100, store=False)
+        if df is None or len(df) < _ADX_PERIOD * 3:
+            return "unknown"
+
+        high, low, close = df["high"], df["low"], df["close"]
+
+        # True Range
+        tr1 = high - low
+        tr2 = (high - close.shift(1)).abs()
+        tr3 = (low - close.shift(1)).abs()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+        alpha = 1.0 / _ADX_PERIOD
+
+        # ATR
+        atr = tr.ewm(alpha=alpha, adjust=False).mean()
+        atr_val = float(atr.iloc[-1])
+        atr_avg = float(atr.tail(_ATR_AVG_BARS).mean())
+
+        # Directional movement
+        up_move = high.diff()
+        down_move = -low.diff()
+        plus_dm = pd.Series(
+            np.where((up_move > down_move) & (up_move > 0), up_move, 0.0),
+            index=df.index,
+        )
+        minus_dm = pd.Series(
+            np.where((down_move > up_move) & (down_move > 0), down_move, 0.0),
+            index=df.index,
+        )
+
+        atr_smooth = tr.ewm(alpha=alpha, adjust=False).mean()
+        plus_di = 100 * plus_dm.ewm(alpha=alpha, adjust=False).mean() / atr_smooth
+        minus_di = 100 * minus_dm.ewm(alpha=alpha, adjust=False).mean() / atr_smooth
+        dx = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan))
+        adx = dx.ewm(alpha=alpha, adjust=False).mean()
+
+        adx_val = float(adx.iloc[-1])
+        plus_di_val = float(plus_di.iloc[-1])
+        minus_di_val = float(minus_di.iloc[-1])
+
+        # Classification (same rules as signal_trading/regime.py)
+        if atr_avg > 0 and atr_val > _ATR_VOLATILE_MULTIPLIER * atr_avg:
+            return "volatile"
+        if adx_val >= _ADX_TREND_THRESHOLD:
+            return "trend_up" if plus_di_val > minus_di_val else "trend_down"
+        return "range"
+
+    except Exception as exc:
+        print(f"Regime detection failed: {exc}", file=sys.stderr)
+        return "unknown"
 
 
 def main():
@@ -116,6 +191,9 @@ def main():
                 except (ValueError, TypeError):
                     pass
 
+        # Detect market regime (4h ADX+ATR); never blocks signal output
+        regime = _detect_regime(symbol)
+
         output = {
             "strategy": strategy_name,
             "symbol": symbol,
@@ -123,6 +201,7 @@ def main():
             "signal": signal,
             "price": round(price, 2),
             "indicators": indicators,
+            "regime": regime,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
         print(json.dumps(output))
